@@ -693,7 +693,7 @@ def joint_entropy_calc(data_2d, tmin, tmax, bins, sfreq=200):
     H, _, _ = np.histogram2d(data_anal[0], data_anal[1], bins=bins)
 
     total = np.sum(H)
-    H_calc = ((H + sys.float_info.epsilon) / total) * np.log2((H + sys.float_info.epsilon) / total)  # 要素積で良い
+    H_calc = ((H + sys.float_info.epsilon) / total) * np.log2((H + sys.float_info.epsilon) / total)
 
     return -1 * np.sum(H_calc)
 
@@ -788,7 +788,6 @@ def lagged_mutual_information(data_2d, tmin, tmax, lagtime_window_t, lag_nums, s
     data_seed = data_2d[seed, int(tmin * sfreq): int(tmax * sfreq)]
     data_target = data_2d[1 - seed]
 
-    # 上のmutual_information_calcを実行するため、data_targetの配列自体を動かしていくことにする。
     MI_cont = []
     time_points = []
 
@@ -859,7 +858,6 @@ def check_raw(func):
 
     def b(self):
         tmp_txt = self.ui.EEGFilesList.currentItem().text()
-        # rawという文字列があるかでraw obかどうか判別。後に変えるかも知れない。
         if not "raw" in tmp_txt:
             self.ui.TextBrowserComment.setText("Select the raw object")
         else:
