@@ -7,5 +7,5 @@ Specially **Hyperscanning project** that is based on two subjects' eeg data can 
 Phase-synchrony-index (PSI) or mutual information entropy analysis... are installed now.
 
 ## Requirement
-Below Python version and libraries are needed.
-- Python >= 3.5
+This app is based on mne-python and other libraries.
+So first, you should install **[mne-python](https://mne.tools/stable/install/index.html)**.
