@@ -28,9 +28,8 @@ And please note the following.
   
   
 ## Usage  
-Please download these files from "download" or git clone command.  
-And activate your python virtual environment by **conda activate** command.
-Then you can run the application by below command  
+Please download these files from "download" or git clone command, and activate your python virtual environment by **conda activate** command.  
+Then you can run the application by entering below command.  
 ```
 python TomakunEEG.py
 ```
