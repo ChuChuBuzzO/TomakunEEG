@@ -2124,7 +2124,7 @@ class SubContinuousPlotting(QDialog):
         self.ui.PushButtonPeakDetect.clicked.connect(self.auto_peak_detect)
 
         ############################
-        # windowの作成
+        # window
         self.win = self.ui.graphicsView
         self.win.setBackground("w")
         self.win.setAntialiasing(aa=True)
@@ -2235,7 +2235,6 @@ class SubContinuousPlotting(QDialog):
                 plw = self.p0.plot(x=self.ons, y=data_plot_all, pen=pqg.mkPen([*col, 40], width=2))
                 self.all_plot.append(plw)
 
-        # 先に前のを消去
         try:
             for plw in self.plws:
                 self.p0.removeItem(plw)
@@ -2410,7 +2409,7 @@ class SubPeakDetect(QDialog):
 
         self.parent = parent
 
-        # checkboxの配置
+        # checkbox
         base = QWidget()
         base.setStyleSheet("background-color: honeydew")
         layout_seed = QGridLayout(base)
@@ -3088,7 +3087,7 @@ class SubSyncSelf(QDialog):
         t_sumtmp = 0
         width_sum = 0
         self.right_x = 20  # line right edge
-        # 横の長さ
+
         self.total_line_length = 1120
         for i, part_t in enumerate(self.raw_length):
             print(i)
@@ -3636,7 +3635,7 @@ class SubViewerR(QDialog):
             self.p0.addItem(self.ln)
 
             #######################
-            # videoとの同期
+            # video sync
             if self.video_playing:
                 position = (pnt.x() / self.sfreq - self.video_delay) * 1000
                 if position < 0:
