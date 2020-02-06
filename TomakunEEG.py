@@ -52,7 +52,7 @@ import glob
 
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-# import matplotlib.pyplot as plt  # pltでimportするとraw_plotがバグる
+# import matplotlib.pyplot as plt
 import matplotlib.pyplot
 import time
 
