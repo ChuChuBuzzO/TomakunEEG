@@ -263,7 +263,7 @@ def csd_apply(raw_arr, ch_names, csd_fullpath, stiffnes, lambda2):
 
     montage = mne.channels.read_montage(csd_fullpath)
     pos_picks = [montage.ch_names.index(x) for x in ch_names]
-    pos = montage.pos[pos_picks]  # これはCartesian spaceの値
+    pos = montage.pos[pos_picks]  # Cartesian space value
 
     cosang = np.dot(pos, pos.T)
     G = calc_g(cosang, stiffnes=stiffnes)
