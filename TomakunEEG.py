@@ -3445,7 +3445,6 @@ class SubViewerR(QDialog):
         self.events_description = raw.annotations.description
 
         ###############################
-        # 初期値
         self.duration = 10
         self.channels_num = self.raw_arr.shape[0]
         self.channels_start = 0
@@ -3516,7 +3515,6 @@ class SubViewerR(QDialog):
         # event plot
         self.CA = colcyc_auto()
 
-        # 各descriptionに色を割り振る
         self.dict_color = {x: self.CA.__next__() for x in set(self.events_description)}
         # dict_color_inv = dict((v, k) for k, v in self.dict_color.items())
 
@@ -3765,9 +3763,7 @@ class SubViewerR(QDialog):
                 self.plws[self.ch_sel].setPen(self.clcs[self.ch_sel], width=3)
                 self.plws[self.ch_sel + 1].setPen(self.clcs[self.ch_sel + 1])
         if evt.key() == QtCore.Qt.Key_B:
-            """
-            bad channelに追加
-            """
+
             if 0 <= self.ch_sel <= self.chan_n - 1:
                 chsel = self.ch_rv[self.ch_sel]
                 if chsel in self.bad_chs:
@@ -4175,7 +4171,7 @@ class SubHyperEventEditor(QDialog):
             else:
                 col = self.parent.CA.__next__()
                 self.parent.dict_color[des] = col
-            # 補色計算
+
             tmp = max(col) + min(col)
             hosyoku = tuple([tmp - x for x in col])
 
