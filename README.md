@@ -32,5 +32,5 @@ Please download these files from "download" or git clone command.
 And activate your python virtual environment by **conda activate** command.
 Then you can run the application by below command  
 ```
-python TamakunEEG.py
+python TomakunEEG.py
 ```
