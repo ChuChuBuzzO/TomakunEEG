@@ -7,3 +7,5 @@ Specially **Hyperscanning project** that is based on two subjects' eeg data can 
 Phase-synchrony-index (PSI) or mutual information entropy analysis... are installed now.
 
 ## Requirement
+Below Python version and libraries are needed.
+- Python >= 3.5
