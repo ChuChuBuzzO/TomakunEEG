@@ -155,7 +155,7 @@ def adjust_MATLAB(raw, rename_chs, chs_num, ced_path, eog_chs, epoch_t=10.0, sfr
 
         except:
             # 謎のエラー回避。仕様上、偶然最初からエラーが起こると、raw_adAがなくなるので止まる。
-            print("謎のエラーあり")
+            print("undefined error")
             raw_o = mne.io.read_raw_eeglab("test_after.set", preload=True)
             raw_o.crop(0, epoch_t - 1 / sfreq)
             raw_adA.append(raw_o)
