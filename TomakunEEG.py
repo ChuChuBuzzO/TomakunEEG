@@ -299,7 +299,7 @@ def merge_AB(raw_A, raw_B, chs_n, events, sfreq=500):
     for event in events[0]:
         annot.append(event[0] / sfreq, 0.01, events_inv[event[2]])
     try:
-        annot.delete(0)  # 技あり
+        annot.delete(0)
         raw.set_annotations(annot)
     except:
         pass
