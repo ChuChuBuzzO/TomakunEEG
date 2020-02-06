@@ -569,7 +569,7 @@ def bins_Freedman(data, tmin, tmax, sfreq=500):
     optimal_bins = []
     for i in range(data.shape[0]):
         anal_array = data[i, int(tmin * sfreq): int(tmax * sfreq)]
-        Q75, Q25 = np.percentile(anal_array, [75, 25])  # 四分位点
+        Q75, Q25 = np.percentile(anal_array, [75, 25])
         data_n = (tmax - tmin) * sfreq
         optimal_bin = np.ceil((np.max(anal_array) - np.min(anal_array)) * (data_n ** (1 / 3)) / (2 * (Q75 - Q25)))
         optimal_bins.append(optimal_bin)
