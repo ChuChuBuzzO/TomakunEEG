@@ -109,22 +109,7 @@ def save_set(raw, fname):
 
 
 def adjust_MATLAB(raw, rename_chs, chs_num, ced_path, eog_chs, epoch_t=10.0, sfreq=500):
-    """
-    MATLABをbindingしているので、仕様が変わると変更を余儀なくされる可能性がある。
-    pythonからMATLABへのデータの受け渡し方がよく分からず、複雑な仕様が生まれた。
 
-    注1：MATLAB上EEGLABでのICAでは、bvefファイルによるモンタージュは使えず、cedファイルを作成する必要がある。
-         ①bvefファイルをメモ帳で開くと、大体の値が分かると思うので、
-         ②EEGLABで何でも良いのでsetファイルを開き、channel locations→cancelから、任意の座標を入力し、
-         ③save as cedで保存できる。変更の際は、必ずeeg_mne.m上のpath
-         ④参考にDesktop/active electroces/animallab.cedを見ると分かりやすい。
-    注2：MATLABへの引き渡し用に、pass.setを一時的に作成している。
-         本appでは処理終わりに、このsetファイルをdeleleする処理も入れておく。
-    注3：MATLAB codeで書いた、eeg_mneとeeg_mne2を動かしているので、これは本appと同じ階層に必要となる。
-    注4：2020/1/9追加
-         チャネル設定のために、MATファイルの中の、1:26などの値を指定する必要があったが、本appのためにこれもtxtファイルで
-         受け渡しするようにした。また、ced_pathも同じtxtファイルから引き渡すようにした。
-    """
     import matlab.engine
     eng = matlab.engine.start_matlab()
     epoch_t = epoch_t
@@ -134,7 +119,6 @@ def adjust_MATLAB(raw, rename_chs, chs_num, ced_path, eog_chs, epoch_t=10.0, sfr
         try:
             raw_Ac.crop(i * epoch_t, (i + 1) * epoch_t)
         except:
-            # なぜかできなかったのでepoch_tで割り切れない部分は捨てる(type must matchという謎のエラー)
             raw_adA.rename_channels(rename_chs)
 
             if eog_chs != []:
@@ -154,7 +138,6 @@ def adjust_MATLAB(raw, rename_chs, chs_num, ced_path, eog_chs, epoch_t=10.0, sfr
             eng.eeg_mne(nargout=0)
 
         except:
-            # 謎のエラー回避。仕様上、偶然最初からエラーが起こると、raw_adAがなくなるので止まる。
             print("undefined error")
             raw_o = mne.io.read_raw_eeglab("test_after.set", preload=True)
             raw_o.crop(0, epoch_t - 1 / sfreq)
@@ -162,18 +145,16 @@ def adjust_MATLAB(raw, rename_chs, chs_num, ced_path, eog_chs, epoch_t=10.0, sfr
             i += 1
             continue
 
-        # めっちゃ複雑。多分自動で落とさない方がいいためにこの仕様になっていると思われるが面倒くさすぎるので自動化する。
-        # report.txtを読み取って、最後の行を抽出
         with open("report.txt", "r") as f:
             lines = f.readlines()
             rep_v = lines[-2].replace("\n", "").split()
             rep_v = [int(x) for x in rep_v]
             # print(rep_v)
-            # print(lines[-2])  # いつも終わりから2行目にartifactのindexが来る(matlab上のindex)
+            # print(lines[-2])
             if rep_v == []:
-                rep_v = [1000]  # なぜかmatlabの方でcsv_readのtryが効かないのでこっちで回避する
-            np.savetxt("rep_a.csv", rep_v, delimiter=",")  # matlabへの引き渡し用(変数の引き渡し方よく分からず)
-        eng.eeg_mne2(nargout=0)  # test_after.setで保存される
+                rep_v = [1000]
+            np.savetxt("rep_a.csv", rep_v, delimiter=",")
+        eng.eeg_mne2(nargout=0)
 
         if i >= 1:
             raw_o = mne.io.read_raw_eeglab("test_after.set", preload=True)
@@ -183,7 +164,7 @@ def adjust_MATLAB(raw, rename_chs, chs_num, ced_path, eog_chs, epoch_t=10.0, sfr
 
         if i == 0:
             raw_adA = mne.io.read_raw_eeglab("test_after.set", preload=True)
-            # この-1が仕様上必要になることが判明(ワンポイント多く切り出しやがるのでそれがかさんでいく)。
+
             raw_adA.crop(0, epoch_t - 1 / sfreq)
             i += 1
 
@@ -205,12 +186,12 @@ def ica_auto(raw, chunks_t=20.0, method="infomax", eogs=["A_ELL", "A_ERT", "A_ER
     -------------------
     """
     from IPython.display import clear_output
-    # chunks_n = int(raw.times[-1] // chunks_t)  # このせいで1エピソード分減る(times[-1]は120秒なら119.999みたいになってるから)
+
     chunks_n = int(raw.get_data().shape[1] // (chunks_t * sfreq))
     for i in range(chunks_n):
         raw_tmp = raw.copy()
         raw_tmp.crop(tmin=chunks_t * i, tmax=chunks_t * (i + 1) - 1 / sfreq)
-        ica = ICA(random_state=0, method=method)  # rejectの使い方分からん
+        ica = ICA(random_state=0, method=method)
         ica.fit(raw_tmp, reject_by_annotation=True)
         rejs = []
         for eog in eogs:
@@ -348,23 +329,21 @@ def psi_morlet_by_arr(raw_arr, seed, target, tmin_m, tmax_m, cwt_freqs, cwt_n_cy
     """
     seed_arr = raw_arr[seed, :]
     target_arr = raw_arr[target, :]
-    data_p = raw_arr.shape[1]  # dataポイントの数
-    freq_n = len(cwt_freqs)  # 解析周波数の数(morletの中心周波数で、解析に用いる個数)
+    data_p = raw_arr.shape[1]
+    freq_n = len(cwt_freqs)
 
-    # よく考えたらここにseed, targetだけ畳み込んだらよいが、そこに無駄がある。
     morlets = mne_morlet(sfreq=sfreq, freqs=cwt_freqs, n_cycles=cwt_n_cycles)
     convs = np.empty((freq_n, 2, data_p), dtype="complex128")
     for m, morlet_ in enumerate(morlets):
         for i, raw_ch in enumerate([seed_arr, target_arr]):
             conv = convolve(raw_ch, morlet_, mode="same")
             convs[m][i][:] = conv
-    # convsに畳み込み結果(解析に用いたmorletの数, chs, dataポイント)次元の行列が入っている
 
-    phase_arr = np.angle(convs)  # np.angleでphaseを抽出
+    phase_arr = np.angle(convs)
 
     T_length = int(data_p - tmin_m * sfreq - tmax_m * sfreq)
 
-    imag = 0j  # 初期化
+    imag = 0j
     img_perf = []
 
     for f in range(freq_n):
@@ -385,26 +364,23 @@ def psi_morlet_by_arr_r(raw_arr, seed, target, tmin, tmax, cwt_freqs, cwt_n_cycl
     """
     This function is the version of not considering margin artifacts of psi_morlet_by_arr.
     """
-
     seed_arr = raw_arr[seed, :]
     target_arr = raw_arr[target, :]
-    data_p = raw_arr.shape[1]  # dataポイントの数
-    freq_n = len(cwt_freqs)  # 解析周波数の数(morletの中心周波数で、解析に用いる個数)
+    data_p = raw_arr.shape[1]
+    freq_n = len(cwt_freqs)
 
-    # よく考えたらここにseed, targetだけ畳み込んだらよいが、そこに無駄がある。
     morlets = mne_morlet(sfreq=sfreq, freqs=cwt_freqs, n_cycles=cwt_n_cycles)
     convs = np.empty((freq_n, 2, data_p), dtype="complex128")
     for m, morlet_ in enumerate(morlets):
         for i, raw_ch in enumerate([seed_arr, target_arr]):
             conv = convolve(raw_ch, morlet_, mode="same")
             convs[m][i][:] = conv
-    # convsに畳み込み結果(解析に用いたmorletの数, chs, dataポイント)次元の行列が入っている
 
-    phase_arr = np.angle(convs)  # np.angleでphaseを抽出
+    phase_arr = np.angle(convs)
 
     T_length = int((tmax - tmin) * sfreq)
 
-    imag = 0j  # 初期化
+    imag = 0j
     img_perf = []
 
     for f in range(freq_n):
@@ -421,8 +397,6 @@ def psi_morlet_by_arr_r(raw_arr, seed, target, tmin, tmax, cwt_freqs, cwt_n_cycl
         return img_perf
 
 
-# continuousのより無駄もなくしたmorlet版。単体に比べて、seedとtargetを最初から分離してより無駄をなくした。
-# 一度にmorletを全体にかけているので、marginを気にする必要はほぼない。
 def psi_morlet_cont_arr(raw_arr, seed, target, tmin, tmax, window_size_t, stride_t, cwt_freqs, cwt_n_cycles,
                         sfreq=500, faverage=True):
     """
@@ -464,12 +438,12 @@ def psi_morlet_cont_arr(raw_arr, seed, target, tmin, tmax, window_size_t, stride
 
     Window_size = window_size_t * sfreq
 
-    n_window = int((tmax - window_size_t - tmin) // stride_t)  # windowの全部の数
+    n_window = int((tmax - window_size_t - tmin) // stride_t)
 
     plv_cap = []
-    window_onset_time = []  # あとでplotしやすいように
+    window_onset_time = []
 
-    imag = 0j  # 初期化
+    imag = 0j
     img_perf = []
 
     for n in range(n_window):
@@ -561,10 +535,10 @@ def continuous_psi_async(args):
 
     phase_arr = np.angle(convs)
     window_size = window_t * sfreq
-    n_window = int((raw_arr.shape[1] / sfreq - window_t) // stride_t)  # windowの全部の数
+    n_window = int((raw_arr.shape[1] / sfreq - window_t) // stride_t)
     psi_cap = np.empty((freq_n, int(n_window)))
 
-    imag = 0j  # 初期化
+    imag = 0j
 
     for n in range(n_window):
         tmin_ab_ind = int(n * stride_t * sfreq)
@@ -623,7 +597,7 @@ def entropy_calc(data, tmin, tmax, bins, base_subtraction=False, base_tmin=-0.4,
         entropy array
 
     """
-    entropies = []  # ch数分
+    entropies = []
     entropies_sub = []
     for i in range(data.shape[0]):
         hist, bin_ = np.histogram(data[i, int(tmin * sfreq): int(tmax * sfreq)], bins=bins)
@@ -849,8 +823,7 @@ def permutation_mutual_information(args):
     data_target = data_2d[1, int(seed_ons * sfreq): int((seed_ons + window_t) * sfreq)]
 
     bins = bins_Freedman(data_2d, seed_ons, seed_ons + window_t, sfreq=sfreq)
-    # targetになる得るデータの範囲
-    # まずベースのMIを算出
+
     data_2d_base = np.vstack((data_seed, data_target))
     MI_base = mutual_information_calc(data_2d_base, tmin=0, tmax=window_t, bins=bins, sfreq=sfreq)
 
@@ -945,7 +918,6 @@ class MyMainWindow(QMainWindow):
     """
     Main Window of this App.
     """
-
     def __init__(self):
         ######################
         # 必須
@@ -1076,7 +1048,7 @@ class MyMainWindow(QMainWindow):
         file_name = self.ui.TextBrowserMovie.toPlainText()
 
         if file_name != "":
-            self.sub = VideoWindow(file_name, self)  # ここでself.subにすることで、サブがinteractのまま、メインを表示できる。
+            self.sub = VideoWindow(file_name, self)
             self.sub.show()
 
     def addlist_eeg(self):
@@ -1097,8 +1069,7 @@ class MyMainWindow(QMainWindow):
             del self.raws[self.ui.EEGFilesList.currentRow()]
 
     def deletealllist_eeg(self):
-        # 単純に初期化
-        self.check = False  # この方法以外に受け渡し方が分からない
+        self.check = False
         sub = SubCheck(self, "Confirmation: Can I initialize?")
         sub.show()
 
@@ -1133,7 +1104,6 @@ class MyMainWindow(QMainWindow):
             files.append(self.ui.EEGFilesList.item(i).text())
         print(files)
 
-        # raw obを作り、list_widgetに表示する。
         for i, file in enumerate(files):
             if file[-5:] == ".vhdr":
                 if i == 0:
@@ -1174,14 +1144,14 @@ class MyMainWindow(QMainWindow):
     @check_raw
     def plot_raw_original(self):
         ind_now = self.ui.EEGFilesList.currentRow()
-        self.subview = SubViewerR(self, ind_now)  # これで途中で他の触ってもsubの番号をロックできる。
+        self.subview = SubViewerR(self, ind_now)
         self.subview.show()
 
     @check_row
     @check_raw
     def plot_power(self):
         raw = self.raws[self.ui.EEGFilesList.currentRow()]
-        raw.plot_psd(fmin=0, fmax=80)  # とりあえずなんとなくのプロット。tminやtmaxもない。
+        raw.plot_psd(fmin=0, fmax=80)
 
     def show_info(self):
         tmp_txt = self.ui.EEGFilesList.currentItem().text()
@@ -1227,14 +1197,14 @@ class MyMainWindow(QMainWindow):
 
             self.ui.EEGFilesList.currentRow()
 
-            raw = self.raws[self.ui.EEGFilesList.currentRow()]  # よく使う
+            raw = self.raws[self.ui.EEGFilesList.currentRow()]
             ch_names = raw.ch_names
             ch_nums = len(ch_names)
             sfreq = raw.info["sfreq"]
             time_points = raw.n_times
             time_seconds = raw.n_times / sfreq
 
-            events = mne.events_from_annotations(raw)  # annotationの取り出し
+            events = mne.events_from_annotations(raw)
 
             self.ui.InfoTable.setItem(1, 1, QTableWidgetItem(" " + str(ch_nums)))
             self.ui.InfoTable.setItem(2, 1, QTableWidgetItem(" " + ",".join(ch_names)))
@@ -1247,7 +1217,7 @@ class MyMainWindow(QMainWindow):
 
         tmp = self.ui.InfoTable.currentItem().text()
         if tmp and "raw" in self.ui.EEGFilesList.currentItem().text():
-            raw = self.raws[self.ui.EEGFilesList.currentRow()]  # 二重になるが、これで良いことにする。
+            raw = self.raws[self.ui.EEGFilesList.currentRow()]
             ch_names = raw.ch_names
             events = mne.events_from_annotations(raw)
             text = "ch_names: {}".format(ch_names) + "\n\n" + "events: {}".format(events)
@@ -1259,9 +1229,8 @@ class MyMainWindow(QMainWindow):
 
     @check_row
     def rename(self):
-        # 全部が同じchannel nameになってることが前提。
         if "raw" in self.ui.EEGFilesList.currentItem().text():
-            raw = self.raws[self.ui.EEGFilesList.currentRow()]  # 二重になるが、これで良いことにする。
+            raw = self.raws[self.ui.EEGFilesList.currentRow()]
             ch_names = raw.ch_names
 
             self.ch_names_after = ""
@@ -1310,12 +1279,8 @@ class MyMainWindow(QMainWindow):
     @check_raws
     @check_row
     def set_ref(self):
-        """
-        後にno_ref以外も搭載した方が良さそう。
-        →2020/1/7追加。
-        """
         eeg_lists = []
-        raw = self.raws[self.ui.EEGFilesList.currentRow()]  # 二重になるが、これで良いことにする。
+        raw = self.raws[self.ui.EEGFilesList.currentRow()]
         ch_names = raw.ch_names
         self.chosen = ""
         self.chosen_electrodes = []
@@ -1326,7 +1291,7 @@ class MyMainWindow(QMainWindow):
         if self.chosen == "N":
             for i, raw in enumerate(self.raws):
                 eeg_lists.append(self.ui.EEGFilesList.item(i).text() + "_N")
-                raw.set_eeg_reference(ref_channels=[])  # これでno_refになる。defaultでaverageに勝手になる。
+                raw.set_eeg_reference(ref_channels=[])
 
         elif self.chosen == "A":
             for i, raw in enumerate(self.raws):
@@ -1402,7 +1367,7 @@ class MyMainWindow(QMainWindow):
         self.icas = []
         for raw in self.raws:
             ica = ICA(random_state=0)
-            ica.fit(raw, reject_by_annotation=True)  # reject_by_annotationはattnotationの中でもbadで始まるやつを除いてくれる
+            ica.fit(raw, reject_by_annotation=True)
             ica.plot_sources(raw)
             ica.plot_components(inst=raw)
             self.icas.append(ica)
@@ -1419,14 +1384,12 @@ class MyMainWindow(QMainWindow):
     @check_row
     def select_eog(self):
         """
-        これはAもBも同じチャネルであることが前提です。
-        またA_やB_の接頭辞がないと、この関数は働きません!!!
+        This function cannot work when "A_" "B_" prefix doesn't exist
         """
         raw = self.raws[self.ui.EEGFilesList.currentRow()]
         ch_names = raw.ch_names
 
         ###############################################
-        # ここでA_やB_じゃないと上手くいかないことに注意。
         ch_names = [x.strip("A_") for x in ch_names]
         ch_names = [x.strip("B_") for x in ch_names]
         ###############################################
@@ -1448,7 +1411,7 @@ class MyMainWindow(QMainWindow):
                 raw.set_channel_types(mapping=dic_tmp)
             else:
                 dic_tmp = {x: "eog" for x in self.eog_channels}
-                raw.set_channel_types(mapping=dic_tmp)  # そのままやるとここでエラーになることがあるが、普通はA_やB_付かないと思うので、まあいいか。
+                raw.set_channel_types(mapping=dic_tmp)
 
         self.ui.TextBrowserComment.setText(
             "EOG select Finished. EOG channels were 'A_' or 'B_' or '' + {}".format(self.eog_channels))
@@ -1485,7 +1448,7 @@ class MyMainWindow(QMainWindow):
 
             self.ui.EEGFilesList.clear()
             self.ui.EEGFilesList.addItems(eeg_lists)
-            self.raws = raws_tmp  # ここで書き換え
+            self.raws = raws_tmp
             self.ui.TextBrowserComment.setText("Split Finished")
         except:
             self.ui.TextBrowserComment.setText("failed")
@@ -1519,8 +1482,6 @@ class MyMainWindow(QMainWindow):
     def set_montage(self):
         montage_path = self.ui.TextBrowserMontageInfo.toPlainText()
 
-        # montageはやや複雑なのでどこかで失敗するかも。32ch用しか今ないので、他は必要に応じてまた作るしかない。
-
         try:
             montage = mne.channels.read_montage(montage_path)
 
@@ -1533,7 +1494,7 @@ class MyMainWindow(QMainWindow):
             montage.ch_names = ['GND', 'REF', 'Fp1', 'Fz', 'F3', 'F7', 'FT9', 'FC5', 'FC1', 'C3', 'T7', 'TP9',
                                 'CP5', 'CP1', 'Pz', 'P3', 'P7', 'O1', 'Oz', 'O2', 'P4', 'P8',
                                 'TP10', 'CP6', 'CP2', 'Cz', 'C4', 'T8', 'FT10', 'FC6', 'FC2',
-                                'F4', 'F8', 'Fp2']  # ここで合うかどうか。ってか合ってる??
+                                'F4', 'F8', 'Fp2']
 
             mne.viz.plot_montage(montage)
 
@@ -1546,7 +1507,7 @@ class MyMainWindow(QMainWindow):
 
     def set_montagehp(self):
         """
-        hyperscanning専用。32chのみ。この辺からA,Bがついてないともはや厳しい。
+        This cannot work when other channels other than below exist.
         """
         montage_path = self.ui.TextBrowserMontageInfo.toPlainText()
 
@@ -1558,7 +1519,7 @@ class MyMainWindow(QMainWindow):
                                  'A_T7', 'A_TP9',
                                  'A_CP5', 'A_CP1', 'A_Pz', 'A_P3', 'A_P7', 'A_O1', 'A_Oz', 'A_O2', 'A_P4', 'A_P8',
                                  'A_TP10', 'A_CP6', 'A_CP2', 'A_Cz', 'A_C4', 'A_T8', 'A_FT10', 'A_FC6', 'A_FC2',
-                                 'A_F4', 'A_F8', 'A_Fp2']  # montageはなければ自動で落としてくれるっぽいので多分大丈夫。
+                                 'A_F4', 'A_F8', 'A_Fp2']
 
             montageB.ch_names = ['GND', 'REF', 'B_Fp1', 'B_Fz', 'B_F3', 'B_F7', 'B_FT9', 'B_FC5', 'B_FC1', 'B_C3',
                                  'B_T7', 'B_TP9',
@@ -1583,7 +1544,7 @@ class MyMainWindow(QMainWindow):
     @check_raws
     def interpolate_bad(self):
         """
-        # これは先にplotしてbad_が設定してあるものにだけ行われる。
+        This function works only "bad" channels
         """
         for raw in self.raws:
             raw.interpolate_bads()
@@ -1592,13 +1553,7 @@ class MyMainWindow(QMainWindow):
     @check_raws
     @check_list_nums
     def adjust_matlab(self):
-        """
-        eeglab上のadjust algorithmを適用する。
-        当然ながら、matlabがpythonから呼び出せるように設定することがまず必要なのと、各ソフトウェアも必要となる。
-        originalでokクリックを別スクリプトで自動化していたが、本appは、別プロセスでこれを実行する。
-        それぞれのadjust処理は並列にできない!! → maltabとの連携が必要なため!!! txtファイルとかもかぶるとおかしくなるよ!!
-        また、find_ok.pngもマシンによって解像度が異なるので、pcに合わせて作り直す必要があることがある。
-        """
+
         pass_num, ok = QInputDialog.getInt(self, "note",
                                            "How many channels to apply ICA?\nNote: At this point, the channels must be sorted in the order of the ced files, and if they are EOG channels, they must be put together at the end.\nPlease select EOG again first when loading data.",
                                            26)
@@ -1610,13 +1565,13 @@ class MyMainWindow(QMainWindow):
                                                    os.getenv("HOMEDRIVE") + os.getenv("HOMEPATH") + "\\Desktop",
                                                    "ced file (*.ced)")[0]
 
-            # この辺が必要になるの、やむなし
+
             raw = self.raws[self.ui.EEGFilesList.currentRow()]
             ch_names = raw.ch_names
             sfreq = raw.info["sfreq"]
 
             ###############################################
-            # ここでA_やB_じゃないと上手くいかないことに注意。
+
             ch_names = [x.strip("A_") for x in ch_names]
             ch_names = [x.strip("B_") for x in ch_names]
             ###############################################
@@ -1691,7 +1646,6 @@ class MyMainWindow(QMainWindow):
     @check_list_nums
     def csd_apply(self):
         try:
-            # 一旦eog外さないといけないので、まずeogのインデックスは、
             csd_path = QFileDialog.getOpenFileName(self, "select the csd file",
                                                    os.getenv("HOMEDRIVE") + os.getenv("HOMEPATH") + "\\Desktop",
                                                    "csd file (*.csd)")[0]
@@ -1700,7 +1654,7 @@ class MyMainWindow(QMainWindow):
             ch_names = raw.ch_names
             sfreq = raw.info["sfreq"]
 
-            # stripしておく。
+
             ch_names = [x.strip("A_") for x in ch_names]
             ch_names = [x.strip("B_") for x in ch_names]
 
@@ -1709,30 +1663,25 @@ class MyMainWindow(QMainWindow):
             for eog in self.eog_channels:
                 eog_idx.append(ch_names.index(eog))
 
-            # よって、eog以外のidxは
+
             noneog_idx = list(filter(lambda x: x not in eog_idx, range(len(ch_names))))
 
-            # # 接頭辞入りじゃない、純なmontageが必要
-            # montage_path = self.ui.TextBrowserMontageInfo.toPlainText()
-            # montage = mne.channels.read_montage(montage_path)
 
-            # ch_names_csdはEOG以外のch_nameにすれば良いので、
             ch_names_csd = []
             for idx in noneog_idx:
                 ch_names_csd.append(ch_names[idx])
 
-            # これにより、eogを外す。
+
             raws_processed = []
             eeg_lists = []
 
             for i, raw in enumerate(self.raws):
-                raw_b = raw.get_data()[noneog_idx, :]  # eog以外
-                raw_e = raw.get_data()[eog_idx, :]  # eog
+                raw_b = raw.get_data()[noneog_idx, :]
+                raw_e = raw.get_data()[eog_idx, :]
 
                 raw_b = csd_apply(raw_b, ch_names=ch_names_csd, csd_fullpath=csd_path, stiffnes=4,
-                                  lambda2=1e-5)  # ここの値設定は...
+                                  lambda2=1e-5)
 
-                # eegを再構築
                 raw_arcsd = np.concatenate([raw_b, raw_e], axis=0)
 
                 ch_names_a = []
@@ -1777,12 +1726,6 @@ class MyMainWindow(QMainWindow):
 
     @check_raws
     def concatenate_data(self):
-        """
-        dataのcondatenate。movie fileあるときとないときでwindowも分ける。
-        結合自体は今一緒になっている。
-        今のとこ実際の処理で違うのは、ビデオとの相対距離を残すかどうかだけ。
-        そして、都合上、今はその情報をeventとして残しておく。
-        """
         if self.ui.TextBrowserMovie.toPlainText() != "":
             sub = SubSyncMovie(self)
             sub.show()
@@ -1796,7 +1739,7 @@ class MyMainWindow(QMainWindow):
     def swap_ab(self):
         raw = self.raws[self.ui.EEGFilesList.currentRow()]
 
-        self.check = False  # この方法以外に受け渡し方が分からない
+        self.check = False
         sub = SubCheck(self, "Confirmation：Is it OK to reverse the channel with 'A_' and the channel with 'B_' (the order of channels should be the same)?")
         sub.show()
 
@@ -1874,7 +1817,7 @@ class MyMainWindow(QMainWindow):
 
 ##################################################################################################
 ##################################################################################################
-# ここからSubWindow
+# SubWindow
 ##################################################################################################
 ##################################################################################################
 class StatisticalMI(QDialog):
@@ -1912,12 +1855,12 @@ class StatisticalMI(QDialog):
             self.ui.ComboBoxTarget.addItem(self.parent.ui.EEGFilesList.item(i).text())
         self.ui.ComboBoxTarget.currentIndexChanged.connect(self.scroll_target_set)
         #####################
-        # target scroll 初期
+        # target scroll
         self.rbs_target = []
         self.target_evt_onset = []
         self.target_evt_description = []
         self.ui.ComboBoxTarget.setCurrentIndex(-1)
-        self.ui.ComboBoxTarget.setCurrentIndex(0)  # やり方分からんが、indexをchangeした時しかsignalが飛ばないのでとりあえずこうしとく(いきなり0はだめ)。
+        self.ui.ComboBoxTarget.setCurrentIndex(0)
         ####################
         # double spin box
         self.ui.DoubleSpinBoxWindowTime.setMinimum(0.1)
@@ -1975,13 +1918,11 @@ class StatisticalMI(QDialog):
         self.ui.ScrollAreaTarget.setWidget(base_t)
 
     def change_seed_target(self):
-        # 使いまわし
         sub = SubSeedTarget(self, radio=False)
         sub.show()
 
     def calculate_result(self):
         ######################################
-        # 各値の収集
         self.ui.LabelProgress.setText("parameter loading...")
         self.sfreq = self.raw_seed.info["sfreq"]
 
@@ -2040,10 +1981,6 @@ class StatisticalMI(QDialog):
 
         self.ui.PushButtonResultPlot.setEnabled(True)
         self.ui.PushButtonResultSave.setEnabled(True)
-
-        # except Exception as e:
-        #     print(e.args)
-        #     self.ui.LabelProgress.setText("設定が誤っています")
 
     def result_plot(self):
         fdr_bool = False
@@ -2134,7 +2071,7 @@ class SubContinuousPlotting(QDialog):
         print(self.ons)
 
         ############################
-        # 初期値とスライダー
+        # slider and
         self.freq_range = [self.freqs[0], self.freqs[-1]]
         self.ui.HorizontalSliderFmin.setMinimum(self.freq_range[0] * 10)
         self.ui.HorizontalSliderFmin.setMaximum(self.freq_range[1] * 10)
@@ -2151,7 +2088,6 @@ class SubContinuousPlotting(QDialog):
 
         self.ui.HorizontalSliderFmin.setPageStep(step)
         self.ui.HorizontalSliderFmax.setPageStep(step)
-        # なぜか効かない
 
         self.ui.LabelFmin.setText(str(self.freq_range[0]) + "Hz")
         self.ui.LabelFmax.setText(str(self.freq_range[1]) + "Hz")
@@ -2173,14 +2109,13 @@ class SubContinuousPlotting(QDialog):
                     cl_stock.append(cc)
                     yield cc
 
-        # 先に一意にcolor割り当て
 
         self.color_auto = colcyc_auto()
         self.cl_dict = {}
         for i, st_name in enumerate(self.st_names):
             self.ui.ComboBoxSelectChannels.addItem(st_name)
             cc = self.color_auto.__next__()
-            self.cl_dict[i] = cc  # comboboxのindexに色が対応する。
+            self.cl_dict[i] = cc
         print(self.cl_dict)
 
         ############################
@@ -2233,8 +2168,6 @@ class SubContinuousPlotting(QDialog):
         self.p_sub.addItem(self.lrsub)
 
         ##############################
-        # event lineの描画
-        # 先にdesに色を振り分け
         self.events_onset = raw.annotations.onset
         self.events_duration = raw.annotations.duration
         self.events_description = raw.annotations.description
@@ -2249,7 +2182,6 @@ class SubContinuousPlotting(QDialog):
             self.p0.addItem(ln)
             self.p_sub.addItem(ln_sub)
 
-        # ここで追加したeventに限り、消去可能
         self.evts_main = []
         self.evts_sub = []
         self.evts_ons = []
@@ -2265,7 +2197,6 @@ class SubContinuousPlotting(QDialog):
     def video_sync(self):
         if self.parent.ui.TextBrowserMovie.toPlainText() != "":
 
-            # video_delayはeventのdescriptionとして登録することにしたから、
             self.video_delay = 0
             for x in self.events_description:
                 if "vdist:" in x:
@@ -2273,10 +2204,10 @@ class SubContinuousPlotting(QDialog):
                     if x.replace(".", "").isnumeric():
                         self.video_delay = float(x)
                     break
-            # videoを立ち上げ、sync_modeをTrueとして渡す
+
             self.sub = VideoWindow(self.parent.ui.TextBrowserMovie.toPlainText(), self, sync_mode=2)
             self.sub.show()
-            self.video_playing = True  # flagをon。とりあえずひとつしか立ち上げないことを前提。防ぎたい場合は、スイッチをdisenableにするなど。
+            self.video_playing = True
             # print(self.video_delay)
             self.ui.PushButtonVideoSync.setEnabled(False)
 
@@ -2331,8 +2262,7 @@ class SubContinuousPlotting(QDialog):
         pnt.setX(evt.pos()[0])
         pnt.setY(evt.pos()[1])
         pnt = self.p0.vb.mapToView(pnt)
-        # pnt_x = int(pnt.x() / self.sfreq)
-        # これに最も近いonsを探して、その時のyを出力する。
+
 
         if evt.button() == 1:
             idx, pos = self.find_nearest(self.ons, pnt.x())
@@ -2346,7 +2276,7 @@ class SubContinuousPlotting(QDialog):
             self.p0.addItem(self.infln)
 
             ###########################
-            # videoとの同期
+            # video sync
             if self.video_playing:
                 position = (pos / self.sfreq - self.video_delay) * 1000
                 if position < 0:
@@ -2358,7 +2288,7 @@ class SubContinuousPlotting(QDialog):
         if evt.key() == QtCore.Qt.Key_A:
             mean_pnts = self.ui.SpinBoxAverage.value()
             self.mean_filter(mean_pnts)
-            # 作り直すのめんどいからmodeで分岐させる
+
             self.update_state(mode=1)
         if evt.key() == QtCore.Qt.Key_Up:
             ci = self.ui.ComboBoxSelectChannels.currentIndex()
@@ -2379,13 +2309,13 @@ class SubContinuousPlotting(QDialog):
         if evt.key() == QtCore.Qt.Key_E:
             event_des = self.ui.TextEditEvent.toPlainText()
             if event_des != "":
-                # 色の振り分け
+
                 if event_des in self.des_dict.keys():
                     ev_col = self.des_dict[event_des]
                 else:
                     ev_col = self.color_auto.__next__()
                     self.des_dict[event_des] = ev_col
-                # inflnの位置にeventを追加する。
+
                 pos = self.infln.pos()
                 print(pos / self.sfreq)
 
@@ -2427,7 +2357,7 @@ class SubContinuousPlotting(QDialog):
                                                                      np.array(self.evts_ons))
             self.parent.raws[self.ind].annotations.description = np.append(
                 self.parent.raws[self.ind].annotations.description, np.array(self.evts_des))
-            # durationは適当に埋める
+
             self.parent.raws[self.ind].annotations.duration = np.append(self.parent.raws[self.ind].annotations.duration,
                                                                         np.ones((len(self.evts_ons))))
 
@@ -2458,9 +2388,6 @@ class SubContinuousPlotting(QDialog):
         self.update_state()
 
     def all_plot(self):
-        """
-        当初全部plotする方針だったが、分かりにくいので、薄地でプロットするだけでその状態で切り替えられるようにする。
-        """
         if not self.all_plot_mode:
             self.all_plot_mode = True
             self.update_state()
@@ -2586,12 +2513,10 @@ class SubPeakDetect(QDialog):
                 print(data_tmp.shape)
                 data_arr = np.append(data_arr, data_tmp, axis=0)
 
-            # numpy.convolveは1dでしか使えないようだ。
             if prefilter > 1:
                 for i in range(data_arr.shape[0]):
                     data_arr[i, :] = np.convolve(data_arr[i, :], np.ones(prefilter) / float(prefilter), "same")
 
-            # そして列方向に平均してからpeak検出
             data_arr = np.mean(data_arr, axis=0).ravel()
 
             maxinds = argrelmax(data_arr, order=order)[0]
@@ -2600,7 +2525,7 @@ class SubPeakDetect(QDialog):
             print(maxinds)
             if maxinds.shape[-1] > 0:
                 for maxind in maxinds:
-                    # posは秒×sfreqで良い
+
                     pos = self.parent.ons[maxind]
                     ln = pqg.InfiniteLine(pos, pen=pqg.mkPen([152, 251, 152, 160], width=3), label="found_peak",
                                           labelOpts={"angle": 45, "color": (152, 251, 152)})
@@ -2754,7 +2679,7 @@ class SubPSIContinuous(QDialog):
             self.ui.progressBar.setValue(0)
             self.ui.LabelProgress.setText("parameter loading...")
             ###############
-            # 各parameterの取得
+            # parameters
             window_t = self.ui.DoubleSpinBoxWindowTime.value()
             stride_t = self.ui.DoubleSpinBoxStrideTime.value()
             seed_channels = self.ui.LabelSeed.text().split(",")
@@ -2764,20 +2689,18 @@ class SubPSIContinuous(QDialog):
             fmin = self.ui.DoubleSpinBoxFreqMin.value()
             fmax = self.ui.DoubleSpinBoxFreqMax.value()
             range_step = self.ui.DoubleSpinBoxRangeStep.value()
-            ################
-            # 並列計算はseed、target毎に行う。
+            ################。
             cwt_freqs = np.arange(fmin, fmax, range_step)
             cwt_n_cycles = cwt_freqs / 2
             sfreq = self.raw.info["sfreq"]
 
             raw_arr = self.raw.get_data()
 
-            # plot用にwindow_onset_timeのindexを別に計算
             window_onset_time_ind = np.arange(0, raw_arr.shape[1] - window_t * sfreq, stride_t * sfreq)
 
             dir_path_save = dir_path + "/psi_{}".format(self.parent.ui.EEGFilesList.item(self.ind).text())
             os.makedirs(dir_path_save, exist_ok=True)
-            # 順番的に(seed, target)は(0, 1) (0, 2) ...(1, 0) (1, 1)...の順
+
             args = [(raw_arr, seed, target, window_t, stride_t, cwt_freqs, cwt_n_cycles, sfreq) for seed in
                     seed_channels_ind for target in target_channels_ind]
             with Pool(processes=os.cpu_count()) as p:
@@ -2788,9 +2711,9 @@ class SubPSIContinuous(QDialog):
                     file_name = dir_path_save + "/{}-{}".format(self.chan_name[args[k][1]], self.chan_name[args[k][2]])
                     np.save(file_name, res)
             #########################
-            # 設定ファイルの保存
+
             np.save(dir_path_save + "/onset", window_onset_time_ind)
-            # 設定ファイルとして、Hzの情報と、sfreqが必要。一応window_tやstride_tも保存しておく。
+
             setting_arr = np.hstack((np.array([sfreq, window_t, stride_t]), cwt_freqs))
             np.save(dir_path_save + "/settings", setting_arr)
 
@@ -2848,12 +2771,12 @@ class SubPSIStatistic(QDialog):
             self.ui.ComboBoxTarget.addItem(self.parent.ui.EEGFilesList.item(i).text())
         self.ui.ComboBoxTarget.currentIndexChanged.connect(self.scroll_target_set)
         #####################
-        # target scroll 初期
+        # target scroll
         self.cbs_target = []
         self.target_evt_onset = []
         self.target_evt_description = []
         self.ui.ComboBoxTarget.setCurrentIndex(-1)
-        self.ui.ComboBoxTarget.setCurrentIndex(0)  # やり方分からんが、indexをchangeした時しかsignalが飛ばないのでとりあえずこうしとく(いきなり0はだめ)。
+        self.ui.ComboBoxTarget.setCurrentIndex(0)
         ####################
         # double spin box
         self.ui.DoubleSpinBoxWindowTime.setValue(1.00)
@@ -2982,44 +2905,39 @@ class SubPSIStatistic(QDialog):
 
     def calculation_result(self):
         ##########################
-        # 各値の収集
+        # parameters
         self.ui.LabelProgress.setText("parameter loading...")
         self.sfreq = self.raw_seed.info["sfreq"]
-        # seedはself.raw_seedで、targetはself.raw_target
-        self.events_seed = []  # seedのeventのlist
+
+        self.events_seed = []
         for cb in self.cbs_seed:
             if cb.isChecked():
                 self.events_seed.append(cb.text())
         events_seed_onset = [x for i, x in enumerate(self.seed_evt_onset) if
-                             self.seed_evt_description[i] in self.events_seed]  # seed eventのonset indexのlist
+                             self.seed_evt_description[i] in self.events_seed]
 
-        self.events_target = []  # target(比較対象)のeventのlist
+        self.events_target = []
         for cb in self.cbs_target:
             if cb.isChecked():
                 self.events_target.append(cb.text())
         events_target_onset = [x for i, x in enumerate(self.target_evt_onset) if
-                               self.target_evt_description[i] in self.events_target]  # target eventのonset indexのlist
+                               self.target_evt_description[i] in self.events_target]
 
         self.window_t = self.ui.DoubleSpinBoxWindowTime.value()  # window time
 
-        self.seed_channels = self.ui.LabelSeed.text().split(",")  # seedのchannel
-        self.target_channels = self.ui.LabelTarget.text().split(",")  # targetのchannel
+        self.seed_channels = self.ui.LabelSeed.text().split(",")  # seed channel
+        self.target_channels = self.ui.LabelTarget.text().split(",")  # target channel
         self.seed_channels_ind = [i for i, x in enumerate(self.chan_name) if x in self.seed_channels]
         self.target_channels_ind = [i for i, x in enumerate(self.chan_name) if x in self.target_channels]
 
         self.fr_range = []
         for lb in self.labels_freq:
-            self.fr_range.append(lb.text().split(" - "))  # frequency rangeである[min, max]のlist
+            self.fr_range.append(lb.text().split(" - "))  # frequency range [min, max] list
 
-        permutation_times = self.ui.SpinBoxPermTimes.value()  # permutationの回数
+        permutation_times = self.ui.SpinBoxPermTimes.value()  # permutation
         self.step_fr = self.ui.DoubleSpinBoxRangeStep.value()
         ###########################
         if len(events_seed_onset) == len(events_target_onset):
-            # task psiとnontask psiとで検定
-            # task psiの計算
-            # (event数(epoch数),fr_range数, seedのチャネル数、targetのチャネル数)の4次元配列
-            # どうにか工夫できそうな気もするが...
-            # しかもめんどいので全部tryで囲っちゃおう
             try:
                 self.ui.LabelProgress.setText("psi calculation start")
                 task_psi = np.empty((len(events_seed_onset), len(self.fr_range), len(self.seed_channels_ind),
@@ -3060,11 +2978,10 @@ class SubPSIStatistic(QDialog):
                 self.ui.LabelProgress.setText("nontask_psi calculation finished")
                 self.ui.progressBar.setValue(0)
 
-                # permutation testを行う。
-                # 先に軸入れ替え
+
                 task_psi = np.transpose(task_psi, (1, 2, 3, 0))
                 nontask_psi = np.transpose(nontask_psi, (1, 2, 3, 0))
-                # (fr_rangeの数, seedの数, targetの数)の3次元
+
                 self.p_values = np.empty(
                     (len(self.fr_range), len(self.seed_channels_ind), len(self.target_channels_ind)))
                 epoch_num = len(events_seed_onset)
@@ -3098,7 +3015,7 @@ class SubPSIStatistic(QDialog):
                 self.ui.LabelProgress.setText("Incorrect settings")
 
     def result_plot(self):
-        fdr_bool = False  # fdr補正したものかどうか
+        fdr_bool = False
         if self.ui.ComboBoxFDR.currentIndex() == 0:
             fdr_bool = True
 
@@ -3167,14 +3084,14 @@ class SubSyncSelf(QDialog):
             raw_sec = round(raw.n_times / raw.info["sfreq"], 2)
             self.raw_length.append(raw_sec)
 
-        self.total_minimum = sum(self.raw_length) * 1.5  # これは後で変えられるようにする。
+        self.total_minimum = sum(self.raw_length) * 1.5
 
         self.q0s = []
         self.q1s = []
 
         t_sumtmp = 0
         width_sum = 0
-        self.right_x = 20  # lineの右端
+        self.right_x = 20  # line right edge
         # 横の長さ
         self.total_line_length = 1120
         for i, part_t in enumerate(self.raw_length):
@@ -3184,23 +3101,22 @@ class SubSyncSelf(QDialog):
             q1 = QDoubleSpinBox()
 
             #################
-            # texticon 設定
             width = self.total_line_length * part_t / self.total_minimum
             print(width)
             # q0.move(50, 50)
             q0.setGeometry(self.right_x + width_sum, 220, width, 30)
 
-            # q0.setPageStep(int(part_t * 100))  # こうすると、右端で揃うために値が縮尺的にずれる。補正法としては、その分maxを増やすか、textbox内の割合をいじるか。
+            # q0.setPageStep(int(part_t * 100))
             q0.setStyleSheet(
                 "background-color: r({},{},{}); border-radius: 10; margin: 1".format(random.randint(0, 255),
                                                                                      random.randint(0, 255),
                                                                                      random.randint(0, 255)))
 
             #################
-            # doublespinbox 設定
+            # doublespinbox
             q1.setMinimum(0)
             q1.setMaximum(self.total_minimum * 10)
-            q1.setDecimals(2)  # 小数点2桁
+            q1.setDecimals(2)
             q1.setValue(t_sumtmp)
 
             width_sum += width
@@ -3221,10 +3137,7 @@ class SubSyncSelf(QDialog):
             self.ui.gridLayout.addLayout(qv, mm, nn)
 
     def change_img(self):
-        """
-        引数付きで渡す場合は複雑で、オブジェクトの登録が必要になるっぽく、めんどくさい。
-        今回は、どうせそんな数多くないので毎回全て更新する。
-        """
+
         for i in range(len(self.q1s)):
             self.q0s[i].setGeometry(self.right_x + self.total_line_length * self.q1s[i].value() / self.total_minimum,
                                     self.q0s[i].y(),
@@ -3250,18 +3163,14 @@ class SubSyncSelf(QDialog):
                 concat_arrs.append(anaume_arr)
                 concat_arrs.append(self.parent.raws[i].get_data())
 
-                events_ons += (self.parent.raws[i].annotations.onset + v).tolist()  # np.arrayなので足すだけで良い
+                events_ons += (self.parent.raws[i].annotations.onset + v).tolist()
                 events_dur += self.parent.raws[i].annotations.duration.tolist()
                 events_des += self.parent.raws[i].annotations.description.tolist()
 
                 pnt = v + self.raw_length[i]
 
-                # print(events_ons)
-                # print(events_dur)
-                # print(events_des)
-
-                print(anaume_arr.shape)
-                print(self.parent.raws[i].get_data().shape)
+                # print(anaume_arr.shape)
+                # print(self.parent.raws[i].get_data().shape)
 
             else:
                 err_flag = True
@@ -3271,21 +3180,18 @@ class SubSyncSelf(QDialog):
             self.parent.ui.TextBrowserComment.setText("Failed due to an error. Please try again.")
 
         else:
-            new_arr = np.concatenate(concat_arrs, axis=1)  # あらたなarr
+            new_arr = np.concatenate(concat_arrs, axis=1)
             # print(new_arr.shape)
             info = mne.create_info(ch_names=ch_names, sfreq=sfreq, ch_types=["eeg"] * len(ch_names))
             new_raw = mne.io.RawArray(new_arr, info=info)
 
-            print(events_ons)
-            print(events_dur)
-            print(events_des)
+            # print(events_ons)
+            # print(events_dur)
+            # print(events_des)
 
-            annot = mne.Annotations(events_ons, events_dur, events_des)  # listの場合はこう
+            annot = mne.Annotations(events_ons, events_dur, events_des)
             new_raw.set_annotations(annot)
-            # これでできることに気づいた。直で入れる場合は、np.arrayの形で入れる必要があることも分かった。
-            # 直入れ：raw.annotations.events_ons = np.array() これをlistにすると変になる。
 
-            # self.parent.ui.EEGFilesList.clear()
             self.parent.ui.EEGFilesList.addItem("raw_sync_with_movie")
             self.parent.raws.append(new_raw)
 
@@ -3322,12 +3228,12 @@ class SubSyncMovie(QDialog):
 
         t_sumtmp = 0
         width_sum = 0
-        self.right_x = 20  # lineの右端
-        # 横の長さ
+        self.right_x = 20
+
         self.total_line_length = 1120
 
         ##################
-        # videoを先に描画
+        # video plot
         self.qm = QLabel(parent=self)
         width = self.total_line_length * self.parent.video_dur / self.total_minimum
         self.qm.setGeometry(self.right_x, 330, width, 30)
@@ -3348,23 +3254,22 @@ class SubSyncMovie(QDialog):
             q1 = QDoubleSpinBox()
 
             #################
-            # texticon 設定
+            # texticon
             width = self.total_line_length * part_t / self.total_minimum
             # print(width)
             # q0.move(50, 50)
             q0.setGeometry(self.right_x + width_sum, 170, width, 30)
 
-            # q0.setPageStep(int(part_t * 100))  # こうすると、右端で揃うために値が縮尺的にずれる。補正法としては、その分maxを増やすか、textbox内の割合をいじるか。
             q0.setStyleSheet(
                 "background-color: r({},{},{}); border-radius: 10; margin: 1".format(random.randint(0, 255),
                                                                                      random.randint(0, 255),
                                                                                      random.randint(0, 255)))
 
             #################
-            # doublespinbox 設定
+            # doublespinbox
             q1.setMinimum(0)
             q1.setMaximum(self.total_minimum * 10)
-            q1.setDecimals(2)  # 小数点2桁
+            q1.setDecimals(2)
             q1.setValue(t_sumtmp)
 
             width_sum += width
@@ -3389,10 +3294,7 @@ class SubSyncMovie(QDialog):
         print(self.duration_sec)
 
     def change_img(self):
-        """
-        引数付きで渡す場合は複雑で、オブジェクトの登録が必要になるっぽく、めんどくさい。
-        今回は、どうせそんな数多くないので毎回全て更新する。
-        """
+
         for i in range(len(self.q1s)):
             self.q0s[i].setGeometry(self.right_x + self.total_line_length * self.q1s[i].value() / self.total_minimum,
                                     self.q0s[i].y(),
@@ -3415,25 +3317,21 @@ class SubSyncMovie(QDialog):
             v = self.q1s[i].value()
             anaume_length = v - pnt
             if v - pnt >= 0:
-                print(v)
-                print(pnt)
+                # print(v)
+                # print(pnt)
 
                 anaume_arr = np.zeros((len(ch_names), int(anaume_length * self.parent.raws[i].info["sfreq"])))
                 concat_arrs.append(anaume_arr)
                 concat_arrs.append(self.parent.raws[i].get_data())
 
-                events_ons += (self.parent.raws[i].annotations.onset + v).tolist()  # np.arrayなので足すだけで良い
+                events_ons += (self.parent.raws[i].annotations.onset + v).tolist()
                 events_dur += self.parent.raws[i].annotations.duration.tolist()
                 events_des += self.parent.raws[i].annotations.description.tolist()
 
                 pnt = v + self.raw_length[i]
 
-                # print(events_ons)
-                # print(events_dur)
-                # print(events_des)
-
-                print(anaume_arr.shape)
-                print(self.parent.raws[i].get_data().shape)
+                # print(anaume_arr.shape)
+                # print(self.parent.raws[i].get_data().shape)
 
             else:
                 err_flag = True
@@ -3444,14 +3342,13 @@ class SubSyncMovie(QDialog):
 
         else:
             ########################
-            # videoとのsyncの時の情報をeventとして残す。データとビデオとの相対距離。
             events_ons += [0]
             events_dur += [0.5]
             events_des += ["vdist:{}".format(self.qm1.value())]
 
             ########################
 
-            new_arr = np.concatenate(concat_arrs, axis=1)  # あらたなarr
+            new_arr = np.concatenate(concat_arrs, axis=1)
             # print(new_arr.shape)
             info = mne.create_info(ch_names=ch_names, sfreq=sfreq, ch_types=["eeg"] * len(ch_names))
             new_raw = mne.io.RawArray(new_arr, info=info)
@@ -3460,12 +3357,9 @@ class SubSyncMovie(QDialog):
             print(events_dur)
             print(events_des)
 
-            annot = mne.Annotations(events_ons, events_dur, events_des)  # listの場合はこう
+            annot = mne.Annotations(events_ons, events_dur, events_des)
             new_raw.set_annotations(annot)
-            # これでできることに気づいた。直で入れる場合は、np.arrayの形で入れる必要があることも分かった。
-            # 直入れ：raw.annotations.events_ons = np.array() これをlistにすると変になる。
 
-            # self.parent.ui.EEGFilesList.clear()
             self.parent.ui.EEGFilesList.addItem("raw_sync_with_movie")
             self.parent.raws.append(new_raw)
 
@@ -3514,7 +3408,7 @@ class SubViewerR(QDialog):
         self.video_playing = False  # video flag
         self.parent = parent
         self.ind = ind
-        raw = self.parent.raws[self.ind].copy()  # 書き換えるときはこの、親のraws[self.ind]にアクセスする。
+        raw = self.parent.raws[self.ind].copy()
 
         self.win = self.ui.graphicsView
         self.win.setBackground("w")
@@ -3523,7 +3417,7 @@ class SubViewerR(QDialog):
         cc = ['#4E79A7', '#F28E2B', '#E15759', '#76B7B2', '#59A14E', '#EDC949', '#B07AA2', '#FF9DA7', '#9C755F',
               '#BAB0AC']
 
-        # color cycleのgenerator
+
         def colcyc(color_cycle):
             i = 0
             le = len(color_cycle)
@@ -3544,11 +3438,11 @@ class SubViewerR(QDialog):
                     yield cc
 
         ##################################
-        raw.resample(60)  # resampleすると露骨に早くなる。rate変えたいときはいじって。optionで変えるとsfreqがずれる可能性があるからやめた方が良い。
+        raw.resample(60)
         self.raw_arr = raw.get_data()
         self.sfreq = raw.info["sfreq"]
         self.chan_name = raw.ch_names
-        self.whole_t = math.ceil(self.raw_arr.shape[1] / self.sfreq)  # 総時間
+        self.whole_t = math.ceil(self.raw_arr.shape[1] / self.sfreq)
         self.chan_n = len(self.chan_name)
 
         self.events_onset = raw.annotations.onset
@@ -3557,7 +3451,7 @@ class SubViewerR(QDialog):
 
         ###############################
         # 初期値
-        self.duration = 10  # ひとスクロール分
+        self.duration = 10
         self.channels_num = self.raw_arr.shape[0]
         self.channels_start = 0
         self.start_t = 0
@@ -3566,16 +3460,14 @@ class SubViewerR(QDialog):
 
         ###############################
         ##################################
-        # channelチェック用
-        self.ch_sel = -1  # 何も選んでない状態を-1とする
+        # channel check
+        self.ch_sel = -1
         self.clcs = []
         self.bad_chs = raw.info["bads"]
         self.ch_rv = list(reversed(self.chan_name))
         self.ui.TextBrowserBad.setText(",".join(self.bad_chs))
         ##################################
-        # p1 = win.addPlot(y=np.random.normal(size=100), pen=pqg.mkPen(colcyc(cc).__next__()))
-        # 最初に全部プロットしてしまって、それを拡大する方針の方が恐らく早い→重かったのでやめる。
-        # 初期描画
+
         self.arr_plot = self.raw_arr / self.scale + np.arange(0, self.channels_num, 1).reshape(-1, 1)
 
         cc_cycle = colcyc(cc)
@@ -3585,14 +3477,14 @@ class SubViewerR(QDialog):
         self.p0.setMouseEnabled(y=False)
         self.p0.setRange(xRange=(int(self.sfreq * self.start_t), int(self.sfreq * (self.start_t + self.duration))),
                          yRange=(self.channels_start - 1.0, self.channels_num), padding=0)
-        self.p0.getAxis("bottom").setScale(1 / self.sfreq)  # 便利なことにこれだけで軸のscalingできる
+        self.p0.getAxis("bottom").setScale(1 / self.sfreq)
         self.p0.hideButtons()
         self.p0.showGrid(x=True, alpha=255)
         self.p0.setMenuEnabled(False)
-        # y軸のnaming
+        # y axis naming
         y_dict = {x: y for x, y in zip(reversed(list(range(self.channels_num))), self.chan_name)}
         self.p0.getAxis("left").setTicks([y_dict.items()])
-        self.plws = []  # plot widget格納用
+        self.plws = []  # plot widget
         for i in range(self.channels_num):
             clc = cc_cycle.__next__()
             plw = self.p0.plot(y=self.arr_plot[i, :].ravel(), pen=pqg.mkPen(clc))
@@ -3626,7 +3518,7 @@ class SubViewerR(QDialog):
         #####################################
 
         ################################
-        # eventの描画 →ややこしいので範囲やめた。onsetのみ描画することにする(どうせduration使わないし)。
+        # event plot
         self.CA = colcyc_auto()
 
         # 各descriptionに色を割り振る
@@ -3638,7 +3530,7 @@ class SubViewerR(QDialog):
         self.labels = []
 
         for ons, dur, des in zip(self.events_onset, self.events_duration, self.events_description):
-            # 同じdesなら同じ色を割り振る
+
             cs = self.dict_color[des]
             range_tmp = (ons * self.sfreq, (ons + dur) * self.sfreq)
             lr = LinearCustomHover(range_tmp, brush=[*cs, 120], pen=[*cs, 200], desc=des, parent=self)
@@ -3657,7 +3549,7 @@ class SubViewerR(QDialog):
             # self.p0.addItem(ti)
 
         ####################################
-        # mouseイベント
+        # mouse event
         # proxy = pqg.SignalProxy(self.p0.scene().sigMouseMoved, rateLimit=60, slot=self.MouseMoved)
         self.p0.scene().sigMouseClicked.connect(self.mouse_clicked)
         ####################################
@@ -3674,11 +3566,10 @@ class SubViewerR(QDialog):
         self.margin = [1.0, 1.0]
         self.psi_step = 0.5
 
-        self.instant_psi_mode = False  # psi_modeのフラグ
+        self.instant_psi_mode = False  # psi_mode flag
         ####################################
 
     def _update_range(self):
-        # もしかすると上のcustomhoverで上手い事オーバーロードしてもできるのかも知れない。
         for i, lr in enumerate(self.lrs):
             pos = lr.getRegion()
             # print(pos)
@@ -3687,7 +3578,7 @@ class SubViewerR(QDialog):
             self.events_duration[i] = (pos[1] - pos[0]) / self.sfreq
 
         ###########
-        # sub 更新
+        # sub update
         try:
             self.sub_event._update()
         except:
@@ -3695,9 +3586,6 @@ class SubViewerR(QDialog):
         ###########
 
     def show_spectrogram(self):
-        # 元のsfreqのrawデータで実施するから、
-        # cwt→分かりにくい。spectrogramで十分
-        # pywaveletsを使う。scaleからfrequencyを計算しても良いが、sampling period設定でfrequencyも一緒に出力される
         NFFT = 64
         matplotlib.pyplot.specgram(self.raw_arr[self.ch_sel, :], NFFT=NFFT, Fs=self.sfreq, noverlap=NFFT / 2,
                                    scale="linear")
@@ -3717,10 +3605,9 @@ class SubViewerR(QDialog):
 
     def play_with_video(self):
         """
-        videoと同期
+        video sync
         """
         if self.parent.ui.TextBrowserMovie.toPlainText() != "":
-            # video_delayはeventのdescriptionとして登録することにしたから、
             self.video_delay = 0
             for x in self.events_description:
                 if "vdist:" in x:
@@ -3728,10 +3615,10 @@ class SubViewerR(QDialog):
                     if x.replace(".", "").isnumeric():
                         self.video_delay = float(x)
                     break
-            # videoを立ち上げ、sync_modeをTrueとして渡す
+
             self.sub = VideoWindow(self.parent.ui.TextBrowserMovie.toPlainText(), self, sync_mode=1)
             self.sub.show()
-            self.video_playing = True  # flagをon。とりあえずひとつしか立ち上げないことを前提。防ぎたい場合は、スイッチをdisenableにするなど。
+            self.video_playing = True
             # print(self.video_delay)
             self.ui.PushButtonPlayWithVideo.setEnabled(False)
 
@@ -3749,17 +3636,17 @@ class SubViewerR(QDialog):
                 self.p0.removeItem(self.ln)
             except:
                 pass
-            self.ln = pqg.InfiniteLine(pnt, pen=[75, 0, 130, 220])  # これで正しい
+            self.ln = pqg.InfiniteLine(pnt, pen=[75, 0, 130, 220])
             self.p0.addItem(self.ln)
 
             #######################
             # videoとの同期
             if self.video_playing:
-                position = (pnt.x() / self.sfreq - self.video_delay) * 1000  # videoはミリ秒単位で動く
+                position = (pnt.x() / self.sfreq - self.video_delay) * 1000
                 if position < 0:
                     position = 0
                 self.sub.position_change(position)
-                # self.sub.position_set(position) 上と同様に不要
+
             #######################
         if evt.button() == 2:
             if self.instant_psi_mode:
@@ -3773,7 +3660,7 @@ class SubViewerR(QDialog):
 
             else:
                 if self.selected_color != "":
-                    # eventを追加する。
+                    # event add
                     # print(self.selected_color)
                     for k, v in self.dict_color.items():
                         if self.selected_color == v:
@@ -3794,16 +3681,14 @@ class SubViewerR(QDialog):
                     self.events_onset = np.append(self.events_onset, pnt.x() / self.sfreq)
                     self.events_duration = np.append(self.events_duration, 1.0)
 
-                    # event window更新
+                    # event window update
                     try:
                         self.sub_event._update()
                     except:
                         pass
 
     def keyPressEvent(self, evt):
-        """
-        ずれる
-        """
+
         if evt.key() == QtCore.Qt.Key_A:
             if not self.instant_psi_mode:
                 self.instant_psi_mode = True
@@ -3828,16 +3713,14 @@ class SubViewerR(QDialog):
                 self.win.setBackground("w")
 
         if evt.key() == QtCore.Qt.Key_C:
-            """
-            seabornでinstant psiをプロット
-            """
+
             try:
                 range_min_sec, range_max_sec = self.lr_psi.getRegion()[0], self.lr_psi.getRegion()[1]
                 range_min_sec = range_min_sec / self.sfreq
-                range_max_sec = range_max_sec / self.sfreq  # 元のデータで計算するので一度secに変換
+                range_max_sec = range_max_sec / self.sfreq
 
                 if range_min_sec > self.margin[0] and range_max_sec < self.whole_t - self.margin[1]:
-                    # marginがあるので、
+                    # margin
                     raw_calc = self.parent.raws[self.ind].copy()
                     sfreq_org = raw_calc.info["sfreq"]
 
@@ -3864,19 +3747,19 @@ class SubViewerR(QDialog):
                     sns.heatmap(result_arr, vmin=0, vmax=1.0, annot=True, fmt='.2f', yticklabels=self.psi_seed,
                                 xticklabels=self.psi_target,
                                 cmap='Reds', ax=ax)
-                    ax.set_ylim(len(self.psi_seed), 0)  # これがないとy軸が見切れる不具合があるよう
+                    ax.set_ylim(len(self.psi_seed), 0)  # need
                     matplotlib.pyplot.show()
             except Exception as e:
                 print(e.args)
 
         if evt.key() == QtCore.Qt.Key_Up:
-            self.ch_sel += 1  # 下から描画しているので、下のが1になる。
+            self.ch_sel += 1
             if self.ch_sel >= self.chan_n:
                 self.plws[self.ch_sel - 1].setPen(self.clcs[self.ch_sel - 1])
                 self.ch_sel = -1
             else:
                 self.plws[self.ch_sel].setPen(self.clcs[self.ch_sel], width=3)
-                self.plws[self.ch_sel - 1].setPen(self.clcs[self.ch_sel - 1])  # 0のとき-1も書き換えていることに注意
+                self.plws[self.ch_sel - 1].setPen(self.clcs[self.ch_sel - 1])
         if evt.key() == QtCore.Qt.Key_Down:
             self.ch_sel -= 1
             if self.ch_sel < 0:
@@ -3921,7 +3804,7 @@ class SubViewerR(QDialog):
         sub_o = SubSubOption(self)
         sub_o.show()
 
-        # scroll barの更新
+        # scroll bar update
         self.ui.horizontalScrollBar.setRange(0, self.whole_t - self.duration)
         self.ui.verticalScrollBar.setRange(0, self.chan_n - self.channels_num)
         self._move_h(self.ui.horizontalScrollBar.value())
@@ -3936,9 +3819,7 @@ class SubViewerR(QDialog):
         self.sub_info.show()
 
     def accepted(self):
-        """
-        okのときだけeventを書き換えることにする。また、bad channelもあれば登録する。
-        """
+
         self.parent.raws[self.ind].annotations.onset = self.events_onset
         self.parent.raws[self.ind].annotations.duration = self.events_duration
         self.parent.raws[self.ind].annotations.description = self.events_description
@@ -4013,14 +3894,14 @@ class SubInformationPlot(QDialog):
         self.ui.LabelTarget.setText(self.psi_target[0])
 
     def channels_select(self):
-        # 使いまわし
+
         self.checked_channels = []
         sub = SubDrop(self, self.chan_name)
         sub.show()
         self.ui.LabelEnt.setText(",".join(self.checked_channels))
 
     def change_seed_target(self):
-        # 使いまわし
+
         sub = SubSeedTarget(self, radio=True)
         sub.show()
 
@@ -4100,9 +3981,7 @@ class SubPSISettings(QDialog):
     Instant PSI calculation setting window.
     """
     def __init__(self, parent):
-        """
-        描画は、psi_arr (ch数×ch数)が与えられたときだけ可能で、matplotlibで行列表示するだけにしとく。
-        """
+
         super().__init__()
         self.ui = ui_psi_settings()
         self.ui.setupUi(self)
@@ -4275,7 +4154,7 @@ class SubHyperEventEditor(QDialog):
         self.events_duration_wd = []
         self.events_description_wd = []
 
-        # layoutの中身を消す方法が今これしかないらしい
+
         def clearLayout(layout):
             while layout.count():
                 child = layout.takeAt(0)
@@ -4325,8 +4204,8 @@ class SubHyperEventEditor(QDialog):
             qh.addWidget(qh2, 2)
 
             #################
-            # リストに追加
-            self.events_description_wd.append(qh0)  # 実質Radiobutton
+            # list adding
+            self.events_description_wd.append(qh0)
             self.events_onset_wd.append(qh1)
             self.events_duration_wd.append(qh2)
             #################
@@ -4514,7 +4393,7 @@ class SubSubEvent(QDialog):
                 q2.setText(des)
                 qh.addWidget(q2, 5)
                 self.ui.verticalLayout.addLayout(qh)
-                self.parent.selected_color = col  # ラストだけ入る
+                self.parent.selected_color = col
 
         self.ui.PushButtonAddNew.clicked.connect(self.add_new_event)
 
@@ -4527,7 +4406,7 @@ class SubSubEvent(QDialog):
         name, ok = QInputDialog.getText(self, 'Event name', 'Enter new event name:')
         if name != "" and ok and not name in self.parent.events_description:
             new_cs = self.parent.CA.__next__()
-            self.parent.dict_color[name] = new_cs  # 色辞書追加するだけ。
+            self.parent.dict_color[name] = new_cs
 
             rb = QRadioButton()
             rb.setStyleSheet("background-color: rgb{}".format(new_cs))
@@ -4591,10 +4470,10 @@ class VideoWindow(QDialog):
         self.setWindowTitle("Movie Viewer")
         self.parent = parent
         self.sync_mode = sync_mode
-        # 常に手前に表示する。
+        # show front
         self.setWindowFlags(QtCore.Qt.WindowStaysOnTopHint)
 
-        # mediaplayerの生成
+        # mediaplayer
 
         self.widget = QVideoWidget()
         self.ui.verticalLayout.addWidget(self.widget)
@@ -4603,20 +4482,20 @@ class VideoWindow(QDialog):
         self.mediaPlayer.setVideoOutput(self.widget)
         self.mediaPlayer.setMedia(QMediaContent(QUrl.fromLocalFile(file_name)))
 
-        # 再生アイコン
+        # play icon
         self.ui.PushButtonPlay.setIcon(QtGui.QIcon("./images/play.png"))
         self.ui.PushButtonPlay.setIconSize(QtCore.QSize(35, 35))
 
-        # 音量アイコン
+        # volume icon
         self.ui.label.setPixmap(QPixmap("./images/volume.png").scaled(25, 25))
-        # 最初は停止状態で。
+        # pause
         self.mediaPlayer.pause()
 
         self.ui.SliderVolume.setValue(50)
         self.duration = 0
 
-        # signal関係
-        self.mediaPlayer.setNotifyInterval(100)  # これでシグナルを飛ばす頻度が変わるので、ヌルヌルになるが、処理遅れも目立ちやすくなる。
+        # signal
+        self.mediaPlayer.setNotifyInterval(100)
         self.mediaPlayer.durationChanged.connect(self.slider_set)
         self.ui.PushButtonPlay.clicked.connect(self.control_video)
         self.ui.SliderVideo.valueChanged.connect(self.position_set)
@@ -4635,35 +4514,30 @@ class VideoWindow(QDialog):
             self.ui.PushButtonPlay.setIconSize(QtCore.QSize(35, 35))
 
     def slider_set(self, duration):
-        """
-        sliderのdurationをセット。ここだけコツがいる。最初に取得してくれない。
-        """
+
         self.ui.SliderVideo.setRange(0, duration)
         self.duration = duration
         self.parent.video_dur = self.duration / 1000
         # print(self.parent.video_dur)
 
     def position_change(self, position):
-        """
-        mediaplayerが一定のinvervalで動くごとに実施。
-        sliderのpositionをセットし、textに今の時間を表示する。
-        """
+
         # print(position)
         self.ui.SliderVideo.setValue(position)
-        # 今の時間を表示する。見たところ、positionは、ミリ秒で与えられていることが分かる。分かりやすいように、分、秒にする。
+
         seconds = position // 1000
         sec = self.duration // 1000
         self.ui.TimeDisp.setText("{}:{} / {}:{}".format(seconds // 60, seconds % 60, sec // 60, sec % 60))
 
         ########################
-        # 脳波との同期
+        # sync with eeg
         if self.sync_mode == 1:
             try:
                 self.parent.p0.removeItem(self.parent.ln)
             except:
                 pass
             # print("position:{}".format(position))
-            pnt_x = (position / 1000 + self.parent.video_delay) * self.parent.sfreq  # setしたいinfinite lineのx座標位置
+            pnt_x = (position / 1000 + self.parent.video_delay) * self.parent.sfreq
             # print("pnt_x:{}".format(pnt_x))
             self.parent.ln = pqg.InfiniteLine(pnt_x, pen=[255, 69, 0, 220])
             self.parent.p0.addItem(self.parent.ln)
@@ -4677,10 +4551,8 @@ class VideoWindow(QDialog):
                 self.parent.p0.setXRange(*range_view)
                 self.parent.lrsub.setRegion(range_view)
 
-            # これで合ってはいるが、飛んでくるsignalの間隔がマチマチで、これはどうしようもない。
-
         ########################
-        # continuous_plotとの同期
+        # continuous_plot sync
         if self.sync_mode == 2:
             try:
                 self.parent.p0.removeItem(self.parent.ln)
@@ -4692,9 +4564,7 @@ class VideoWindow(QDialog):
             self.parent.p0.addItem(self.parent.ln)
 
     def position_set(self, position):
-        """
-        sliderが動くと、mediaもそこまであわせて動かす。
-        """
+
         self.mediaPlayer.setPosition(position)
 
     def volume_set(self, position):
@@ -4702,7 +4572,7 @@ class VideoWindow(QDialog):
 
     def closeEvent(self, evt):
         if self.sync_mode == 1:
-            self.parent.video_playing = False  # 閉じたら、playingをFalseに
+            self.parent.video_playing = False
             self.parent.ui.PushButtonPlayWithVideo.setEnabled(True)
         if self.sync_mode == 2:
             try:
@@ -4746,7 +4616,7 @@ class SubSplit(QDialog):
     """
     def __init__(self, parent, text=""):
         super().__init__()
-        self.parent = parent  # ここでparentを設定することで、親ウィンドウに値を渡せる!!
+        self.parent = parent
         self.ui = ui_split()
         self.ui.setupUi(self)
 
@@ -4771,7 +4641,7 @@ class SubSplit(QDialog):
         self.conv_cnt = 0
         self.ui.ConvButton.clicked.connect(self.conv_button)
 
-        self.ui.buttonBox.accepted.connect(self.accepted)  # self.acceptにすると挙動がおかしい
+        self.ui.buttonBox.accepted.connect(self.accepted)
         self.ui.buttonBox.rejected.connect(self.rejected)
 
     def check_message(self):
@@ -4793,7 +4663,7 @@ class SubSplit(QDialog):
 
     def conv_button(self):
         if self.conv_cnt == 0:
-            # テンプレ登録
+            # template !!
             temp = ["Fp1", "Fz", "F3", "F7", "FC5", "FC1", "C3", "CP5", "CP1", "Pz", "P3",
                     "P7", "O1", "Oz", "O2", "P4", "P8", "CP6", "CP2", "Cz", "C4", "FC6",
                     "FC2", "F4", "F8", "Fp2", "ELL", "ERT", "ERU", "ERR"]
@@ -4813,14 +4683,14 @@ class SubSplit(QDialog):
 
     def accepted(self):
         """
-        ok 押されたとき
+        ok
         """
         self.parent.split_channelsA = self.ui.TextBrowserA.toPlainText()
         self.parent.split_channelsB = self.ui.TextBrowserB.toPlainText()
 
     def rejected(self):
         """
-        キャンセル押されたとき
+        cancell
         """
         print("reject")
 
@@ -4834,7 +4704,7 @@ class SubEOG(QDialog):
     """
     def __init__(self, parent, lis=[]):
         super().__init__()
-        self.parent = parent  # ここでparentを設定することで、親ウィンドウに値を渡せる!!
+        self.parent = parent
         self.ui = ui_eog()
         self.ui.setupUi(self)
         self.ui.buttonBox.accepted.connect(self.accepted)
@@ -4866,7 +4736,7 @@ class SubDrop(QDialog):
     """
     def __init__(self, parent, lis=[]):
         super().__init__()
-        self.parent = parent  # ここでparentを設定することで、親ウィンドウに値を渡せる!!
+        self.parent = parent
         self.ui = ui_drop()
         self.ui.setupUi(self)
         self.ui.buttonBox.accepted.connect(self.accepted)
@@ -4911,7 +4781,7 @@ class SubRename(QDialog):
     """
     def __init__(self, parent, text=""):
         super().__init__()
-        self.parent = parent  # ここでparentを設定することで、親ウィンドウに値を渡せる!!
+        self.parent = parent
         self.ui = ui_rename()
         self.ui.setupUi(self)
 
@@ -4922,7 +4792,7 @@ class SubRename(QDialog):
         self.conv_cnt = 0
         self.ui.ConvButton.clicked.connect(self.conv_button)
 
-        self.ui.buttonBox.accepted.connect(self.accepted)  # self.acceptにすると挙動がおかしい
+        self.ui.buttonBox.accepted.connect(self.accepted)
         self.ui.buttonBox.rejected.connect(self.rejected)
 
     def check_message(self):
@@ -4940,7 +4810,7 @@ class SubRename(QDialog):
 
     def conv_button(self):
         if self.conv_cnt == 0:
-            # テンプレ登録
+            # template!!
             temp = ["Fp1", "Fz", "F3", "F7", "ELL", "FC5", "FC1", "C3", "ERU", "A1", "CP5", "CP1", "Pz", "P3",
                     "P7", "O1", "Oz", "O2", "P4", "P8", "A2", "CP6", "CP2", "Cz", "C4", "ERT", "ERR", "FC6",
                     "FC2", "F4", "F8", "Fp2"]
@@ -4958,13 +4828,13 @@ class SubRename(QDialog):
 
     def accepted(self):
         """
-        ok 押されたとき
+        ok
         """
         self.parent.ch_names_after = self.ui.TextBrowserAfter.toPlainText()
 
     def rejected(self):
         """
-        キャンセル押されたとき
+        cancelled
         """
         print("reject")
 
@@ -4978,7 +4848,7 @@ class SubReorder(QDialog):
     """
     def __init__(self, parent, text=""):
         super().__init__()
-        self.parent = parent  # ここでparentを設定することで、親ウィンドウに値を渡せる!!
+        self.parent = parent
         self.ui = ui_reorder()
         self.ui.setupUi(self)
 
@@ -4989,7 +4859,7 @@ class SubReorder(QDialog):
         self.conv_cnt = 0
         self.ui.ConvButton.clicked.connect(self.conv_button)
 
-        self.ui.buttonBox.accepted.connect(self.accepted)  # self.acceptにすると挙動がおかしい
+        self.ui.buttonBox.accepted.connect(self.accepted)
         self.ui.buttonBox.rejected.connect(self.rejected)
 
     def check_message(self):
@@ -5025,14 +4895,11 @@ class SubReorder(QDialog):
 
     def accepted(self):
         """
-        ok 押されたとき
+        ok
         """
         self.parent.ch_names_after = self.ui.TextBrowserAfter.toPlainText()
 
     def rejected(self):
-        """
-        キャンセル押されたとき
-        """
         print("reject")
 
     def show(self):
@@ -5045,7 +4912,7 @@ class SubRef(QDialog):
     """
     def __init__(self, parent, text):
         super().__init__()
-        self.parent = parent  # ここでparentを設定することで、親ウィンドウに値を渡せる!!
+        self.parent = parent
         self.ui = ui_ref()
         self.ui.setupUi(self)
         self.text = text
@@ -5081,7 +4948,7 @@ class SubMultipleChoice(QDialog):
     """
     def __init__(self, parent, text):
         super().__init__()
-        self.parent = parent  # ここでparentを設定することで、親ウィンドウに値を渡せる!!
+        self.parent = parent
         self.ui = ui_choice()
         self.ui.setupUi(self)
 
@@ -5098,7 +4965,7 @@ class SubMultipleChoice(QDialog):
 
 ###############################################################################################
 ###############################################################################################
-# ここから実行
+# main
 ###############################################################################################
 ###############################################################################################
 if __name__ == "__main__":
