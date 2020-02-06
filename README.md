@@ -24,6 +24,4 @@ And please note the following.
   
 - When you'd like to use MATLAB Adjust algorithm binding. you should also install [MATLAB engine API](https://jp.mathworks.com/help/matlab/matlab_external/install-the-matlab-engine-for-python.html) and install [eeglab](https://sccn.ucsd.edu/eeglab/index.php),  [Adjust algorithm](https://www.nitrc.org/projects/adjust/) from their homepage. So when you use these bindings, you should give attention to their license.
 
-- Current source density (csd) code is a bit customization of [pyCSD](https://github.com/nice-tools/pycsd). So when you use the csd function, please check the applicable web-page.
-  
-  
+- Current source density (csd) code is a bit customization of [pyCSD](https://github.com/nice-tools/pycsd). So when you use the csd function, please check the applicable web-page.  
