@@ -169,7 +169,6 @@ def adjust_MATLAB(raw, rename_chs, chs_num, ced_path, eog_chs, epoch_t=10.0, sfr
             i += 1
 
 
-# 2019-8-12改変
 def ica_auto(raw, chunks_t=20.0, method="infomax", eogs=["A_ELL", "A_ERT", "A_ERU", "A_ERR"], sfreq=500):
     """
     Only "eog" components are removed from the raw object automatically by mne function
