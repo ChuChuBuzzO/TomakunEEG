@@ -908,7 +908,7 @@ def check_list_nums(func):
 
 #######################################################################################################
 #######################################################################################################
-# ここからMainWindow
+# MainWindow
 #######################################################################################################
 #######################################################################################################
 class MyMainWindow(QMainWindow):
@@ -917,7 +917,6 @@ class MyMainWindow(QMainWindow):
     """
     def __init__(self):
         ######################
-        # 必須
         super().__init__()
         self.ui = ui_main()
         self.ui.setupUi(self)
@@ -1157,7 +1156,7 @@ class MyMainWindow(QMainWindow):
             self.ui.InfoTable.setItem(0, 0, tmp_item)
         else:
             ########################################################
-            # Information Tableの編集
+            # Information Table
             tmp = QTableWidgetItem(tmp_txt)
             tmp.setBackground(QColor(192, 91, 118))
             self.ui.InfoTable.setItem(0, 0, tmp)
