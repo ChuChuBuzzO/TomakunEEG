@@ -15,7 +15,7 @@ This app is based on mne-python, pyQt and other libraries.
   
 - Next, please install other libraries in your environment from your commandline.  
 ```
-conda install pyqt pyqtgraph seaborn
+conda install pyqt pyqtgraph seaborn numba
 ```
   
 If you cannnot run this app normaly, please update these libraries by **conda update** command.  
