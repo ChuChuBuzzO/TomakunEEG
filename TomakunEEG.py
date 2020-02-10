@@ -45,10 +45,13 @@ import math
 import pyqtgraph as pqg
 import random
 from mne.time_frequency.tfr import morlet as mne_morlet
-from scipy.signal import convolve, gaussian, argrelmax
+from scipy.signal import convolve, gaussian, argrelmax, decimate
 import seaborn as sns
-from multiprocessing import Pool
+from multiprocessing import Pool, Array, Value
 import glob
+import ctypes
+from tqdm import tqdm
+from numba import jit, f4, i4
 
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
@@ -335,8 +338,7 @@ def psi_morlet_by_arr(raw_arr, seed, target, tmin_m, tmax_m, cwt_freqs, cwt_n_cy
     convs = np.empty((freq_n, 2, data_p), dtype="complex128")
     for m, morlet_ in enumerate(morlets):
         for i, raw_ch in enumerate([seed_arr, target_arr]):
-            conv = convolve(raw_ch, morlet_, mode="same")
-            convs[m][i][:] = conv
+            convs[m][i][:] = convolve(raw_ch, morlet_, mode="same")
 
     phase_arr = np.angle(convs)
 
@@ -372,8 +374,7 @@ def psi_morlet_by_arr_r(raw_arr, seed, target, tmin, tmax, cwt_freqs, cwt_n_cycl
     convs = np.empty((freq_n, 2, data_p), dtype="complex128")
     for m, morlet_ in enumerate(morlets):
         for i, raw_ch in enumerate([seed_arr, target_arr]):
-            conv = convolve(raw_ch, morlet_, mode="same")
-            convs[m][i][:] = conv
+            convs[m][i][:] = convolve(raw_ch, morlet_, mode="same")
 
     phase_arr = np.angle(convs)
 
@@ -428,8 +429,7 @@ def psi_morlet_cont_arr(raw_arr, seed, target, tmin, tmax, window_size_t, stride
 
     for m, morlet_ in enumerate(morlets):
         for i, raw_ch in enumerate([seed_arr, target_arr]):
-            conv = convolve(raw_ch, morlet_, mode="same")
-            convs[m][i][:] = conv
+            convs[m][i][:] = convolve(raw_ch, morlet_, mode="same")
     phase_arr = np.angle(convs)
 
     Tmin = tmin * sfreq
@@ -513,31 +513,11 @@ def permutation_test(args):
     return ret_arr
 
 
-def continuous_psi_async(args):
-    """
-    This function is for parallel computing for psi continuous calculation.
-    """
-    raw_arr, seed_ind, target_ind, window_t, stride_t, cwt_freqs, cwt_n_cycles, sfreq = args
-
-    seed_arr = raw_arr[seed_ind, :]
-    target_arr = raw_arr[target_ind, :]
-
-    data_p = raw_arr.shape[1]
-    morlets = mne_morlet(sfreq=sfreq, freqs=cwt_freqs, n_cycles=cwt_n_cycles)
-    freq_n = len(cwt_freqs)
-    convs = np.empty((freq_n, 2, data_p), dtype="complex128")
-
-    for m, morlet in enumerate(morlets):
-        for i, raw_ch in enumerate([seed_arr, target_arr]):
-            conv = convolve(raw_ch, morlet, mode="same")
-            convs[m][i][:] = conv
-
-    phase_arr = np.angle(convs)
-    window_size = window_t * sfreq
-    n_window = int((raw_arr.shape[1] / sfreq - window_t) // stride_t)
-    psi_cap = np.empty((freq_n, int(n_window)))
-
+@jit(f4[:, :](f4[:, :, :], i4, i4, f4, f4, i4))
+def calc_psi_cap(phase_arr, freq_n, n_window, window_t, stride_t, sfreq):
+    psi_cap = np.empty((freq_n, n_window), dtype=np.float32)
     imag = 0j
+    window_size = window_t * sfreq
 
     for n in range(n_window):
         tmin_ab_ind = int(n * stride_t * sfreq)
@@ -549,6 +529,29 @@ def continuous_psi_async(args):
                 imag += phase_diff_euler
             psi_cap[f, n] = float(np.abs(imag) / window_size)
             imag = 0j
+
+    return psi_cap
+
+
+def continuous_psi_async(args):
+    """
+    This function is for parallel computing for psi continuous calculation.
+    """
+    seed_arr, target_arr, seed_ind, target_ind, window_t, stride_t, cwt_freqs, cwt_n_cycles, sfreq = args
+
+    data_p = seed_arr.shape[-1]
+    morlets = mne_morlet(sfreq=sfreq, freqs=cwt_freqs, n_cycles=cwt_n_cycles)
+    freq_n = len(cwt_freqs)
+    convs = np.empty((freq_n, 2, data_p), dtype="complex64")
+
+    for m, morlet in enumerate(morlets):
+        for i, raw_ch in enumerate([seed_arr, target_arr]):
+            convs[m][i][:] = convolve(raw_ch, morlet, mode="same")
+
+    phase_arr = np.angle(convs)
+    n_window = int((data_p / sfreq - window_t) // stride_t)
+
+    psi_cap = calc_psi_cap(phase_arr, freq_n, n_window, window_t, stride_t, sfreq)
 
     return psi_cap
 
@@ -2051,7 +2054,7 @@ class SubContinuousPlotting(QDialog):
             cps_path = cps_path.strip(dir_path + "\\")
             cps_path = cps_path.strip(".npy")
             self.st_names.append(cps_path)
-        print(self.st_names)
+        # print(self.st_names)
         ############################
         # load
         self.ons = np.load(ons_path[0])
@@ -2063,8 +2066,8 @@ class SubContinuousPlotting(QDialog):
         self.whole_t = math.ceil(raw.n_times / self.sfreq)
         # self.ons_s = self.ons / self.sfreq
 
-        print(self.freqs)
-        print(self.ons)
+        # print(self.freqs)
+        # print(self.ons)
 
         ############################
         # slider and
@@ -2075,7 +2078,10 @@ class SubContinuousPlotting(QDialog):
         self.ui.HorizontalSliderFmax.setMaximum(self.freq_range[1] * 10)
         self.ui.HorizontalSliderFmin.setValue(self.freq_range[0] * 10)
         self.ui.HorizontalSliderFmax.setValue(self.freq_range[1] * 10)
-        step = int((self.freq_range[1] - self.freq_range[0] / (len(self.freqs) - 1)) * 10)
+        print(self.freq_range[0] * 10)
+        print(self.freq_range[1] * 10)
+        step = int(((self.freq_range[1] - self.freq_range[0]) / (len(self.freqs) - 1)) * 10)
+        print(step)
         self.ui.HorizontalSliderFmin.setTickInterval(step)
         self.ui.HorizontalSliderFmax.setTickInterval(step)
 
@@ -2112,7 +2118,7 @@ class SubContinuousPlotting(QDialog):
             self.ui.ComboBoxSelectChannels.addItem(st_name)
             cc = self.color_auto.__next__()
             self.cl_dict[i] = cc
-        print(self.cl_dict)
+        # print(self.cl_dict)
 
         ############################
         # spin box
@@ -2691,19 +2697,40 @@ class SubPSIContinuous(QDialog):
 
             raw_arr = self.raw.get_data()
 
-            window_onset_time_ind = np.arange(0, raw_arr.shape[1] - window_t * sfreq, stride_t * sfreq)
 
             dir_path_save = dir_path + "/psi_{}".format(self.parent.ui.EEGFilesList.item(self.ind).text())
             os.makedirs(dir_path_save, exist_ok=True)
 
-            args = [(raw_arr, seed, target, window_t, stride_t, cwt_freqs, cwt_n_cycles, sfreq) for seed in
+            # shared_arrays = []
+            # for i in range(raw_arr.shape[0]):
+            #     shared_arrays.append(Array("d", raw_arr[i, :].tolist()))
+            # print(shared_arrays[0])
+
+            ##########################
+            # shared memory <- numpy
+            n = raw_arr.astype(np.float32)
+
+            #########
+            # window onset time ind
+            window_onset_time_ind = np.arange(0, n.shape[1] - window_t * sfreq, stride_t * sfreq)
+            #########
+
+            n_w, n_h = n.shape
+            v = Value((ctypes.c_float * n_h) * n_w)
+            v_c = v.get_obj()
+            v_n = np.ctypeslib.as_array(v_c)
+            v_n[:] = n
+            ##########################
+
+            args = [(v_n[seed, :], v_n[target, :], seed, target, window_t, stride_t, cwt_freqs, cwt_n_cycles, sfreq) for seed in
                     seed_channels_ind for target in target_channels_ind]
+            print("start calculation")
             with Pool(processes=os.cpu_count()) as p:
                 ite = p.imap(continuous_psi_async, args)
-                for k, res in enumerate(ite):
+                for k, res in enumerate(tqdm(ite, total=len(args))):
                     self.ui.progressBar.setValue(100 * k / len(args))
                     self.ui.LabelProgress.setText("continuous PSI calculated...")
-                    file_name = dir_path_save + "/{}-{}".format(self.chan_name[args[k][1]], self.chan_name[args[k][2]])
+                    file_name = dir_path_save + "/{}-{}".format(self.chan_name[args[k][2]], self.chan_name[args[k][3]])
                     np.save(file_name, res)
             #########################
 
@@ -3329,6 +3356,7 @@ class SubSyncMovie(QDialog):
                 # print(self.parent.raws[i].get_data().shape)
 
             else:
+                print(v -pnt)
                 err_flag = True
                 break
 
@@ -3381,7 +3409,6 @@ class SubViewerR(QDialog):
     """
     Viewer of EEG using pyqtgraph.
     """
-
     def __init__(self, parent, ind):
         super().__init__()
         self.ui = ui_eegview_focus()
@@ -3391,6 +3418,8 @@ class SubViewerR(QDialog):
         self.ui.PushButtonEvents.clicked.connect(self.event_checker)
         self.ui.PushButtonOption.clicked.connect(self.option)
         self.ui.horizontalScrollBar.valueChanged.connect(self._move_h)
+        # self.ui.horizontalScrollBar.setTracking(False)
+        self.ui.horizontalScrollBar.sliderReleased.connect(self._moved)
         self.ui.verticalScrollBar.valueChanged.connect(self._move_v)
         self.ui.PushButtonEventsEdit.clicked.connect(self.event_editor)
         self.ui.buttonBox.accepted.connect(self.accepted)
@@ -3784,8 +3813,17 @@ class SubViewerR(QDialog):
     def _move_h(self, value):
         self.start_t = value
         range_view = int(self.sfreq * self.start_t), int(self.sfreq * (self.start_t + self.duration))
-        self.p0.setXRange(*range_view)
+        # self.p0.setXRange(*range_view)
         self.lrsub.setRegion(range_view)
+        self.hvalue = value
+
+    def _moved(self):
+        """
+        This is faster than pre version
+        """
+        self.start_t = self.hvalue
+        range_view = int(self.sfreq * self.start_t), int(self.sfreq * (self.start_t + self.duration))
+        self.p0.setXRange(*range_view)
 
     def _move_v(self, value):
         self.channels_start = value
@@ -3799,6 +3837,7 @@ class SubViewerR(QDialog):
         self.ui.horizontalScrollBar.setRange(0, self.whole_t - self.duration)
         self.ui.verticalScrollBar.setRange(0, self.chan_n - self.channels_num)
         self._move_h(self.ui.horizontalScrollBar.value())
+        self._moved()
         # self._move_v(self.ui.verticalScrollBar.value())
 
     def psi_settings(self):
