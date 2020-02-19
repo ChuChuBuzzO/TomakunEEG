@@ -480,6 +480,7 @@ def psi_calc(args):
         cwt_freqs = np.arange(float(fmin), float(fmax), step_fr)
         for m, seed_ind in enumerate(seed_channels_ind):
             for n, target_ind in enumerate(target_channels_ind):
+                print("({}, {})".format(m, n))
                 psi_val = psi_morlet_by_arr(raw_arr, seed=seed_ind, target=target_ind, tmin_m=margin[0],
                                             tmax_m=margin[1], cwt_freqs=cwt_freqs, cwt_n_cycles=cwt_freqs / 2,
                                             sfreq=sfreq, faverage=True)
@@ -512,6 +513,24 @@ def permutation_test(args):
         ret_arr[t] = p_value
     return ret_arr
 
+
+def plot_p(p, seed_channels, target_channels, fr_range, mode, fdr, dirpath=""):
+    for i in range(p.shape[0]):
+        fig, ax = matplotlib.pyplot.subplots(figsize=(p.shape[2] / 2, p.shape[1] / 2 + 1))
+        sns.heatmap(p[i, :, :], annot=True, vmin=0, vmax=0.1, fmt='.2f',
+                    yticklabels=seed_channels,
+                    xticklabels=target_channels,
+                    cmap="Reds_r", ax=ax)
+        ax.set_ylim(p.shape[1], 0)
+        if fdr:
+            ax.set_title("{} - {} Hz, p-fdr".format(fr_range[i][0], fr_range[i][1]))
+        else:
+            ax.set_title("{} - {} Hz, p-values".format(fr_range[i][0], fr_range[i][1]))
+
+        if mode == "save":
+            matplotlib.pyplot.savefig(dirpath + "{}_{}.png".format(fr_range[i][0], fr_range[i][1]))
+    if mode == "plot":
+        matplotlib.pyplot.show()
 
 @jit(f4[:, :](f4[:, :, :], i4, i4, f4, f4, i4))
 def calc_psi_cap(phase_arr, freq_n, n_window, window_t, stride_t, sfreq):
@@ -2962,13 +2981,14 @@ class SubPSIStatistic(QDialog):
         if len(events_seed_onset) == len(events_target_onset):
             try:
                 self.ui.LabelProgress.setText("psi calculation start")
+                print("psi calculation start")
                 task_psi = np.empty((len(events_seed_onset), len(self.fr_range), len(self.seed_channels_ind),
                                      len(self.target_channels_ind)))
                 arg = [(x, self.raw_seed, self.fr_range, self.seed_channels_ind, self.target_channels_ind, self.margin,
                         self.window_t, self.step_fr, self.sfreq) for x in events_seed_onset]
                 with Pool(processes=os.cpu_count()) as p:
                     ite = p.imap(psi_calc, arg)
-                    for k, res in enumerate(ite):
+                    for k, res in enumerate(tqdm(ite, total=len(arg))):
                         ################
                         # progress bar
                         self.ui.LabelProgress.setText("task_psi calculated...")
@@ -2978,16 +2998,16 @@ class SubPSIStatistic(QDialog):
                         ################
                         task_psi[k, :, :, :] = res
                 self.ui.LabelProgress.setText("task_psi calculation finished")
+                print("task_psi calculation finished")
                 self.ui.progressBar.setValue(0)
 
                 nontask_psi = np.empty((len(events_target_onset), len(self.fr_range), len(self.seed_channels_ind),
                                         len(self.target_channels_ind)))
-                arg = [(
-                       x, self.raw_target, self.fr_range, self.seed_channels_ind, self.target_channels_ind, self.margin,
+                arg = [(x, self.raw_target, self.fr_range, self.seed_channels_ind, self.target_channels_ind, self.margin,
                        self.window_t, self.step_fr, self.sfreq) for x in events_target_onset]
                 with Pool(processes=os.cpu_count()) as p:
                     ite = p.imap(psi_calc, arg)
-                    for k, res in enumerate(ite):
+                    for k, res in enumerate(tqdm(ite, total=len(arg))):
                         ################
                         # progress bar
                         self.ui.LabelProgress.setText("nontask_psi calculated...")
@@ -2998,6 +3018,7 @@ class SubPSIStatistic(QDialog):
                         nontask_psi[k, :, :, :] = res
 
                 self.ui.LabelProgress.setText("nontask_psi calculation finished")
+                print("nontask_psi calculation finished")
                 self.ui.progressBar.setValue(0)
 
 
@@ -3012,7 +3033,7 @@ class SubPSIStatistic(QDialog):
                             epoch_num) for s in range(len(self.seed_channels_ind))]
                     with Pool(processes=os.cpu_count()) as p:
                         ite = p.imap(permutation_test, arg)
-                        for s, res in enumerate(ite):
+                        for s, res in enumerate(tqdm(ite, total=len(arg))):
                             #################
                             # progress bar
                             self.ui.LabelProgress.setText("permutation test... {}/{}".format(l + 1, len(self.fr_range)))
@@ -3028,6 +3049,7 @@ class SubPSIStatistic(QDialog):
                 ####################
                 # progress bar
                 self.ui.LabelProgress.setText("Finished")
+                print("Finished")
                 self.ui.progressBar.setValue(0)
                 self.ui.PushButtonResultPlot.setEnabled(True)
                 self.ui.PushButtonResultSave.setEnabled(True)
@@ -3041,47 +3063,36 @@ class SubPSIStatistic(QDialog):
         if self.ui.ComboBoxFDR.currentIndex() == 0:
             fdr_bool = True
 
+
         if fdr_bool:
-            for i in range(self.p_fdr.shape[0]):
-                fig, ax = matplotlib.pyplot.subplots(figsize=(self.p_fdr.shape[2] / 2, self.p_fdr.shape[1] / 2 + 1))
-                sns.heatmap(self.p_fdr[i, :, :], annot=True, vmin=0, vmax=0.1, fmt='.2f',
-                            yticklabels=self.seed_channels,
-                            xticklabels=self.target_channels,
-                            cmap="Reds_r", ax=ax)
-                ax.set_ylim(self.p_fdr.shape[1], 0)
-                ax.set_title("{} - {} Hz, p-fdr".format(self.fr_range[i][0], self.fr_range[i][1]))
+            plot_p(self.p_fdr, self.seed_channels, self.target_channels, self.fr_range, mode="plot", fdr=True)
 
-            matplotlib.pyplot.show()
         else:
-            for i in range(self.p_values.shape[0]):
-                fig, ax = matplotlib.pyplot.subplots(
-                    figsize=(self.p_values.shape[2] / 2, self.p_values.shape[1] / 2 + 1))
-                sns.heatmap(self.p_values[i, :, :], annot=True, vmin=0, vmax=0.1, fmt='.2f',
-                            yticklabels=self.seed_channels, xticklabels=self.target_channels,
-                            cmap="Reds_r", ax=ax)
-                ax.set_ylim(self.p_values.shape[1], 0)
-                ax.set_title("{} - {} Hz, p-uncorrected".format(self.fr_range[i][0], self.fr_range[i][1]))
-
-            matplotlib.pyplot.show()
+            plot_p(self.p_values, self.seed_channels, self.target_channels, self.fr_range, mode="plot", fdr=False)
 
     def result_save(self):
         dir_path_save = ""
         try:
             dir_path = QFileDialog.getExistingDirectory(self, 'Select directory to save',
                                                         os.getenv("HOMEDRIVE") + os.getenv("HOMEPATH") + "\\Desktop")
-            dir_path_save = dir_path + "/st_result_{}".format(self.parent.ui.EEGFilesList.item(self.ind).text())
+            header, ok = QInputDialog.getText(self, 'event name?', 'Enter the event(save) name:', text="_event")
+            dir_path_save = dir_path + "/st_result_{}".format(header)
             os.makedirs(dir_path_save, exist_ok=False)
         except:
             self.ui.LabelProgress.setText("Processing was canceled because the directory with the same name could not be created.")
             dir_path = ""
 
-        if dir_path != "":
+
+        if dir_path != "" and ok:
             np.save(dir_path_save + "/p_fdr", self.p_fdr)
             np.save(dir_path_save + "/p_uncorre", self.p_values)
             with open(dir_path_save + "/settings.txt", "w") as f:
                 text = "settings: seed channels: {}, target channels: {}, seed_events: {}, target_events: {}, fr_range:{}".format(
                     self.seed_channels, self.target_channels, self.events_seed, self.events_target, self.fr_range)
                 f.write(text)
+            plot_p(self.p_fdr, self.seed_channels, self.target_channels, self.fr_range, mode="save", fdr=True, dirpath=dir_path_save + "/" + "fdr")
+            plot_p(self.p_values, self.seed_channels, self.target_channels, self.fr_range, mode="save", fdr=False, dirpath=dir_path_save + "/" + "uncorre")
+
 
     def show(self):
         self.exec_()
@@ -3417,9 +3428,10 @@ class SubViewerR(QDialog):
 
         self.ui.PushButtonEvents.clicked.connect(self.event_checker)
         self.ui.PushButtonOption.clicked.connect(self.option)
-        self.ui.horizontalScrollBar.valueChanged.connect(self._move_h)
+        # self.ui.horizontalScrollBar.valueChanged.connect(self._move_h)
         # self.ui.horizontalScrollBar.setTracking(False)
-        self.ui.horizontalScrollBar.sliderReleased.connect(self._moved)
+        # self.ui.horizontalScrollBar.sliderReleased.connect(self._moved)
+        self.ui.horizontalScrollBar.valueChanged.connect(self._move_both_h)
         self.ui.verticalScrollBar.valueChanged.connect(self._move_v)
         self.ui.PushButtonEventsEdit.clicked.connect(self.event_editor)
         self.ui.buttonBox.accepted.connect(self.accepted)
@@ -3824,6 +3836,13 @@ class SubViewerR(QDialog):
         self.start_t = self.hvalue
         range_view = int(self.sfreq * self.start_t), int(self.sfreq * (self.start_t + self.duration))
         self.p0.setXRange(*range_view)
+
+    def _move_both_h(self, value):
+        self.start_t = value
+        range_view = int(self.sfreq * self.start_t), int(self.sfreq * (self.start_t + self.duration))
+        self.p0.setXRange(*range_view)
+        self.lrsub.setRegion(range_view)
+        self.hvalue = value
 
     def _move_v(self, value):
         self.channels_start = value
